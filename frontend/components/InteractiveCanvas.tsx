@@ -23,6 +23,7 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
   const [imageElement, setImageElement] = useState<HTMLImageElement | null>(null);
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 600 });
   const [showInstructions, setShowInstructions] = useState(true);
+  const [loadedMaskImages, setLoadedMaskImages] = useState<Map<number, HTMLImageElement>>(new Map());
 
   // Load image and calculate canvas size
   useEffect(() => {
@@ -259,6 +260,22 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
     }
   }, [coloredMasks.length, drawCanvas]);
 
+  // Pre-load mask images for better hover detection
+  useEffect(() => {
+    if (masks.length > 0 && imageElement) {
+      const newLoadedImages = new Map<number, HTMLImageElement>();
+      
+      masks.forEach((mask) => {
+        const img = new Image();
+        img.onload = () => {
+          newLoadedImages.set(mask.id, img);
+          setLoadedMaskImages(new Map(newLoadedImages));
+        };
+        img.src = `data:image/png;base64,${mask.mask}`;
+      });
+    }
+  }, [masks, imageElement]);
+
   // Utility: Generate unique colors for masks
   const getUniqueColor = (index: number): string => {
     const colors = [
@@ -271,47 +288,72 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
   };
 
   // Utility: Check if a point is inside a mask (pixel hit-test)
-  function isPointInMask(maskBase64: string, x: number, y: number, imageWidth: number, imageHeight: number): boolean {
+  function isPointInMask(maskId: number, x: number, y: number, imageWidth: number, imageHeight: number): boolean {
     try {
-      const img = new window.Image();
-      img.src = `data:image/png;base64,${maskBase64}`;
+      // Check bounds first
+      if (x < 0 || x >= imageWidth || y < 0 || y >= imageHeight) {
+        return false;
+      }
+      
+      // Get the pre-loaded mask image
+      const maskImage = loadedMaskImages.get(maskId);
+      if (!maskImage) {
+        return false;
+      }
+      
       // Create a temporary canvas
       const tempCanvas = document.createElement('canvas');
       tempCanvas.width = imageWidth;
       tempCanvas.height = imageHeight;
       const ctx = tempCanvas.getContext('2d');
       if (!ctx) return false;
-      ctx.drawImage(img, 0, 0);
+      
+      // Draw the mask and check pixel
+      ctx.drawImage(maskImage, 0, 0);
       const pixel = ctx.getImageData(x, y, 1, 1).data;
-      // If alpha > 0, the point is inside the mask
+      
+      // Check if the pixel has any alpha value (indicating mask presence)
       return pixel[3] > 0;
-    } catch {
+    } catch (error) {
+      // If there's any error, return false
       return false;
     }
   }
 
   // Handle mouse move for hover detection (no backend call)
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!imageElement || masks.length === 0) return;
+    if (!imageElement || masks.length === 0) {
+      setHoveredMaskId(null);
+      return;
+    }
+    
     const canvas = canvasRef.current;
     if (!canvas) return;
+    
     const rect = canvas.getBoundingClientRect();
     const x = Math.round(e.clientX - rect.left);
     const y = Math.round(e.clientY - rect.top);
+    
     // Convert to image coordinates
     const imageCoords = canvasToImageCoords(x, y);
+    
     if (
       imageCoords.x >= 0 && imageCoords.x < imageElement.width &&
       imageCoords.y >= 0 && imageCoords.y < imageElement.height
     ) {
       // Find the topmost mask under the cursor
       let foundMaskId: number | null = null;
+      
+      // Check masks in reverse order (top to bottom)
       for (let i = masks.length - 1; i >= 0; i--) {
-        if (isPointInMask(masks[i].mask, imageCoords.x, imageCoords.y, imageElement.width, imageElement.height)) {
-          foundMaskId = masks[i].id;
+        const mask = masks[i];
+        if (isPointInMask(mask.id, imageCoords.x, imageCoords.y, imageElement.width, imageElement.height)) {
+          foundMaskId = mask.id;
           break;
         }
+
       }
+      
       setHoveredMaskId(foundMaskId);
     } else {
       setHoveredMaskId(null);
@@ -337,16 +379,18 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
       if (imageCoords.x >= 0 && imageCoords.x <= imageElement.width && 
           imageCoords.y >= 0 && imageCoords.y <= imageElement.height) {
         
-        // If we have masks and we're hovering over one, select it
-        if (masks.length > 0 && hoveredMaskId !== null) {
-          // Toggle selection of the hovered mask
-          onMaskSelect(hoveredMaskId, !selectedMasks.has(hoveredMaskId));
-        } else if (isClickToGenerateMode) {
-          // Only call onPointClick if click mode is active and no mask is under cursor
+        if (isClickToGenerateMode) {
+          // Click mode is active - always generate a new mask
           if (e.shiftKey) {
             onPointClick(imageCoords.x, imageCoords.y, true, false);
           } else {
             onPointClick(imageCoords.x, imageCoords.y, false, false);
+          }
+        } else {
+          // Click mode is not active - try to select existing masks
+          if (masks.length > 0 && hoveredMaskId !== null) {
+            // Toggle selection of the hovered mask
+            onMaskSelect(hoveredMaskId, !selectedMasks.has(hoveredMaskId));
           }
         }
       }

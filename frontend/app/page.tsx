@@ -165,34 +165,8 @@ export default function HomePage() {
     if (!sessionId) return;
     
     try {
-      // If we have masks, try to find the mask at this point (this is always allowed)
-      if (masks.length > 0) {
-        const response = await api.getMaskAtPoint(sessionId, [x, y], masks);
-        
-        // Find the mask in our local array and select it
-        const maskIndex = masks.findIndex(m => m.mask === response.mask);
-        if (maskIndex !== -1) {
-          const maskId = masks[maskIndex].id;
-          
-          if (isRightClick) {
-            // Remove from selection
-            selectMask(maskId, false);
-            toast.success('Area removed from selection!');
-          } else if (isShiftClick) {
-            // Add to selection
-            selectMask(maskId, true);
-            toast.success('Area added to selection!');
-          } else {
-            // Replace selection
-            clearSelectedMasks();
-            selectMask(maskId, true);
-            toast.success('Area selected!');
-          }
-        } else {
-          toast.error('No mask found at this point. Try clicking on a different area.');
-        }
-      } else if (isClickToGenerateMode) {
-        // No masks available and click-to-generate mode is active, generate a new mask at this point
+      if (isClickToGenerateMode) {
+        // Click mode is active - generate a new mask at this point
         toast.loading('Generating mask for this area...', { id: 'generate-mask-point' });
         
         const newMask = await generateMaskAtPoint(sessionId, [x, y]);
@@ -203,8 +177,36 @@ export default function HomePage() {
           toast.error('Failed to generate mask for this area. Please try again.', { id: 'generate-mask-point' });
         }
       } else {
-        // No masks available and click-to-generate mode is not active
-        toast.success('Click "Click to Generate Mask" to enable mask generation mode, then click on areas to generate masks.');
+        // Click mode is not active - try to select existing masks
+        if (masks.length > 0) {
+          const response = await api.getMaskAtPoint(sessionId, [x, y], masks);
+          
+          // Find the mask in our local array and select it
+          const maskIndex = masks.findIndex(m => m.mask === response.mask);
+          if (maskIndex !== -1) {
+            const maskId = masks[maskIndex].id;
+            
+            if (isRightClick) {
+              // Remove from selection
+              selectMask(maskId, false);
+              toast.success('Area removed from selection!');
+            } else if (isShiftClick) {
+              // Add to selection
+              selectMask(maskId, true);
+              toast.success('Area added to selection!');
+            } else {
+              // Replace selection
+              clearSelectedMasks();
+              selectMask(maskId, true);
+              toast.success('Area selected!');
+            }
+          } else {
+            toast.error('No mask found at this point. Try clicking on a different area.');
+          }
+        } else {
+          // No masks available and click mode is not active
+          toast.success('Click "Click to Generate Mask" to enable mask generation mode, then click on areas to generate masks.');
+        }
       }
       
     } catch (err) {
@@ -537,6 +539,7 @@ export default function HomePage() {
                   <MaskGallery
                     masks={masks}
                     selectedMasks={selectedMasks}
+                    hoveredMaskId={hoveredMaskId}
                     onMaskSelect={handleMaskSelect}
                     onMaskHover={handleMaskHover}
                   />

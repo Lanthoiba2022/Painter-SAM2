@@ -139,6 +139,7 @@ export interface CanvasProps {
 export interface MaskGalleryProps {
   masks: MaskInfo[];
   selectedMasks: Set<number>;
+  hoveredMaskId: number | null;
   onMaskSelect: (maskId: number, isSelected: boolean) => void;
   onMaskHover?: (maskId: number | null) => void;
 }

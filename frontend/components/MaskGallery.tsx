@@ -8,6 +8,7 @@ import { MaskInfo } from '@/types';
 interface MaskGalleryProps {
   masks: MaskInfo[];
   selectedMasks: Set<number>;
+  hoveredMaskId: number | null;
   onMaskSelect: (maskId: number, isSelected: boolean) => void;
   onMaskHover?: (maskId: number | null) => void;
 }
@@ -15,6 +16,7 @@ interface MaskGalleryProps {
 const MaskGallery: React.FC<MaskGalleryProps> = ({
   masks,
   selectedMasks,
+  hoveredMaskId,
   onMaskSelect,
   onMaskHover,
 }) => {
@@ -46,6 +48,7 @@ const MaskGallery: React.FC<MaskGalleryProps> = ({
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
         {masks.map((mask, index) => {
           const isSelected = selectedMasks.has(mask.id);
+          const isHoveredFromImage = hoveredMaskId === mask.id;
           
           return (
             <motion.div
@@ -56,6 +59,8 @@ const MaskGallery: React.FC<MaskGalleryProps> = ({
                 relative group cursor-pointer rounded-xl border-2 transition-all duration-200 overflow-hidden
                 ${isSelected 
                   ? 'border-blue-500 bg-blue-50/50 shadow-lg ring-2 ring-blue-200' 
+                  : isHoveredFromImage
+                  ? 'border-cyan-500 bg-cyan-50/50 shadow-lg ring-2 ring-cyan-200'
                   : 'border-gray-200 hover:border-gray-300 bg-gray-50/50 hover:shadow-md'
                 }
               `}
