@@ -11,8 +11,10 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
   selectedMasks,
   coloredMasks,
   showAllMasks,
+  hoveredMaskId,
   onMaskSelect,
   onPointClick,
+  setHoveredMaskId,
   sessionId,
   isClickToGenerateMode = false,
 }) => {
@@ -21,7 +23,6 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
   const [imageElement, setImageElement] = useState<HTMLImageElement | null>(null);
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 600 });
   const [showInstructions, setShowInstructions] = useState(true);
-  const [hoveredMaskId, setHoveredMaskId] = useState<number | null>(null);
 
   // Load image and calculate canvas size
   useEffect(() => {
@@ -172,11 +173,11 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
     });
 
     // Draw masks based on state
-    masks.forEach((mask) => {
+    masks.forEach((mask, index) => {
       const isSelected = selectedMasks.has(mask.id);
       const isHovered = hoveredMaskId === mask.id;
       
-      // Only draw masks if they are selected, hovered, or if we're showing all masks
+      // Draw masks if they are selected, hovered, or if we're showing all masks
       if (isSelected || isHovered || showAllMasks) {
         const maskImg = new Image();
         maskImg.onload = () => {
@@ -209,8 +210,8 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
             fillColor = '#4ecdc4';
             opacity = 0.5;
           } else if (showAllMasks) {
-            fillColor = '#95a5a6';
-            opacity = 0.3;
+            fillColor = getUniqueColor(index);
+            opacity = 0.4;
           }
           
           // Create colored overlay only where mask is white
@@ -258,6 +259,17 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
     }
   }, [coloredMasks.length, drawCanvas]);
 
+  // Utility: Generate unique colors for masks
+  const getUniqueColor = (index: number): string => {
+    const colors = [
+      '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD',
+      '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E9', '#F8C471', '#82E0AA',
+      '#F1948A', '#85C1E9', '#FAD7A0', '#D7BDE2', '#A9DFBF', '#F9E79F',
+      '#F5B7B1', '#AED6F1', '#ABEBC6', '#FDEBD0', '#E8DAEF', '#D5F4E6'
+    ];
+    return colors[index % colors.length];
+  };
+
   // Utility: Check if a point is inside a mask (pixel hit-test)
   function isPointInMask(maskBase64: string, x: number, y: number, imageWidth: number, imageHeight: number): boolean {
     try {
@@ -304,7 +316,7 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
     } else {
       setHoveredMaskId(null);
     }
-  }, [imageElement, masks, canvasToImageCoords]);
+  }, [imageElement, masks, canvasToImageCoords, setHoveredMaskId]);
 
   // Handle canvas click
   const handleCanvasClick = useCallback(

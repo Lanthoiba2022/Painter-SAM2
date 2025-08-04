@@ -522,8 +522,10 @@ export default function HomePage() {
                       selectedMasks={selectedMasks}
                       coloredMasks={coloredMasks}
                       showAllMasks={showAllMasks}
+                      hoveredMaskId={hoveredMaskId}
                       onMaskSelect={handleMaskSelect}
                       onPointClick={handlePointClick}
+                      setHoveredMaskId={setHoveredMaskId}
                       sessionId={sessionId}
                       isClickToGenerateMode={isClickToGenerateMode}
                     />

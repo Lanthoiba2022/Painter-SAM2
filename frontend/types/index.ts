@@ -128,8 +128,10 @@ export interface CanvasProps {
   selectedMasks: Set<number>;
   coloredMasks: ColoredMask[];
   showAllMasks: boolean;
+  hoveredMaskId: number | null;
   onMaskSelect: (maskId: number, isSelected: boolean) => void;
   onPointClick: (x: number, y: number, isShiftClick?: boolean, isRightClick?: boolean) => void;
+  setHoveredMaskId: (maskId: number | null) => void;
   sessionId?: string | null;
   isClickToGenerateMode?: boolean;
 }
