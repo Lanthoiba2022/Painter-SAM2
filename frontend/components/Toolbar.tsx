@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import {
   Wand2,
@@ -12,18 +12,23 @@ import {
   Settings,
   Info,
   MousePointer,
+  Sparkles,
+  Layers,
+  X,
 } from 'lucide-react';
 import { ToolbarProps } from '@/types';
 import LoadingSpinner from './LoadingSpinner';
 
 const Toolbar: React.FC<ToolbarProps> = ({
   onGenerateMasks,
+  onGenerateAdvancedMasks,
   onPaintMasks,
   onDownloadImage,
   onReset,
   onToggleAllMasks,
   onToggleClickToGenerate,
   isGeneratingMasks,
+  isGeneratingAdvancedMasks,
   isPainting,
   isDownloading,
   hasImage,
@@ -31,25 +36,70 @@ const Toolbar: React.FC<ToolbarProps> = ({
   hasSelectedMasks,
   isClickToGenerateMode,
 }) => {
+  const [showHelp, setShowHelp] = useState(false);
+
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-4">
+    <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl border border-gray-200/50 p-4">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-gray-900">Tools</h3>
         <div className="flex items-center space-x-2">
+          <div className="w-6 h-6 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
+            <Layers className="w-3 h-3 text-white" />
+          </div>
+          <h3 className="text-base font-bold text-gray-900">Tools</h3>
+        </div>
+        <div className="flex items-center space-x-1">
           <button
-            className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+            className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100/50 rounded-lg transition-all duration-200"
             title="Settings"
           >
-            <Settings className="w-4 h-4" />
+            <Settings className="w-3 h-3" />
           </button>
           <button
-            className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+            className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100/50 rounded-lg transition-all duration-200"
             title="Help"
+            onClick={() => setShowHelp(!showHelp)}
           >
-            <Info className="w-4 h-4" />
+            <Info className="w-3 h-3" />
           </button>
         </div>
       </div>
+
+      {/* Help Tooltip */}
+      {showHelp && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-4 p-3 bg-blue-50/80 border border-blue-200/50 rounded-xl relative"
+        >
+          <button
+            onClick={() => setShowHelp(false)}
+            className="absolute top-2 right-2 text-gray-400 hover:text-gray-600"
+          >
+            <X className="w-3 h-3" />
+          </button>
+          <div className="text-xs text-blue-800 space-y-1">
+            <p className="font-semibold mb-2">How to paint:</p>
+            <ul className="space-y-1">
+              <li className="flex items-start space-x-2">
+                <span className="w-1 h-1 bg-blue-500 rounded-full mt-1.5 flex-shrink-0"></span>
+                <span>Select masks from the gallery below</span>
+              </li>
+              <li className="flex items-start space-x-2">
+                <span className="w-1 h-1 bg-blue-500 rounded-full mt-1.5 flex-shrink-0"></span>
+                <span>Choose a color from the palette</span>
+              </li>
+              <li className="flex items-start space-x-2">
+                <span className="w-1 h-1 bg-blue-500 rounded-full mt-1.5 flex-shrink-0"></span>
+                <span>Click "Paint Selected Areas" to apply</span>
+              </li>
+              <li className="flex items-start space-x-2">
+                <span className="w-1 h-1 bg-blue-500 rounded-full mt-1.5 flex-shrink-0"></span>
+                <span>Download the final result</span>
+              </li>
+            </ul>
+          </div>
+        </motion.div>
+      )}
 
       <div className="space-y-3">
         {/* Generate All Masks Button */}
@@ -57,12 +107,12 @@ const Toolbar: React.FC<ToolbarProps> = ({
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.98 }}
           onClick={onGenerateMasks}
-          disabled={!hasImage || isGeneratingMasks}
+          disabled={!hasImage || isGeneratingMasks || isGeneratingAdvancedMasks}
           className={`
-            w-full flex items-center justify-center space-x-2 px-4 py-3 rounded-lg font-medium transition-all
-            ${hasImage && !isGeneratingMasks
-              ? 'bg-primary-500 text-white hover:bg-primary-600 shadow-md hover:shadow-lg'
-              : 'bg-gray-200 text-gray-500 cursor-not-allowed'
+            w-full flex items-center justify-center space-x-2 px-3 py-3 rounded-xl font-semibold transition-all duration-200 text-sm
+            ${hasImage && !isGeneratingMasks && !isGeneratingAdvancedMasks
+              ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white hover:from-blue-600 hover:to-blue-700 shadow-lg hover:shadow-xl'
+              : 'bg-gray-100 text-gray-400 cursor-not-allowed'
             }
           `}
         >
@@ -70,8 +120,32 @@ const Toolbar: React.FC<ToolbarProps> = ({
             <LoadingSpinner size="sm" color="text-white" text="Generating..." />
           ) : (
             <>
-              <Wand2 className="w-4 h-4" />
+              <Sparkles className="w-4 h-4" />
               <span>Generate All Masks</span>
+            </>
+          )}
+        </motion.button>
+
+        {/* Generate Advanced Masks Button */}
+        <motion.button
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.98 }}
+          onClick={onGenerateAdvancedMasks}
+          disabled={!hasImage || isGeneratingMasks || isGeneratingAdvancedMasks}
+          className={`
+            w-full flex items-center justify-center space-x-2 px-3 py-3 rounded-xl font-semibold transition-all duration-200 text-sm
+            ${hasImage && !isGeneratingMasks && !isGeneratingAdvancedMasks
+              ? 'bg-gradient-to-r from-purple-500 to-purple-600 text-white hover:from-purple-600 hover:to-purple-700 shadow-lg hover:shadow-xl'
+              : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+            }
+          `}
+        >
+          {isGeneratingAdvancedMasks ? (
+            <LoadingSpinner size="sm" color="text-white" text="Generating..." />
+          ) : (
+            <>
+              <Sparkles className="w-4 h-4" />
+              <span>Generate Max Coverage</span>
             </>
           )}
         </motion.button>
@@ -83,17 +157,17 @@ const Toolbar: React.FC<ToolbarProps> = ({
           onClick={onToggleClickToGenerate}
           disabled={!hasImage}
           className={`
-            w-full flex items-center justify-center space-x-2 px-4 py-3 rounded-lg font-medium transition-all
+            w-full flex items-center justify-center space-x-2 px-3 py-3 rounded-xl font-semibold transition-all duration-200 text-sm
             ${hasImage
               ? isClickToGenerateMode
-                ? 'bg-green-500 text-white hover:bg-green-600 shadow-md hover:shadow-lg'
-                : 'bg-blue-500 text-white hover:bg-blue-600 shadow-md hover:shadow-lg'
-              : 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                ? 'bg-gradient-to-r from-green-500 to-green-600 text-white hover:from-green-600 hover:to-green-700 shadow-lg hover:shadow-xl'
+                : 'bg-gradient-to-r from-purple-500 to-purple-600 text-white hover:from-purple-600 hover:to-purple-700 shadow-lg hover:shadow-xl'
+              : 'bg-gray-100 text-gray-400 cursor-not-allowed'
             }
           `}
         >
           <MousePointer className="w-4 h-4" />
-          <span>{isClickToGenerateMode ? 'Click Mode: ON' : 'Click to Generate Mask'}</span>
+          <span>{isClickToGenerateMode ? 'Click Mode: ON' : 'Click to Generate'}</span>
         </motion.button>
 
         {/* Paint Masks Button */}
@@ -103,10 +177,10 @@ const Toolbar: React.FC<ToolbarProps> = ({
           onClick={onPaintMasks}
           disabled={!hasSelectedMasks || isPainting}
           className={`
-            w-full flex items-center justify-center space-x-2 px-4 py-3 rounded-lg font-medium transition-all
+            w-full flex items-center justify-center space-x-2 px-3 py-3 rounded-xl font-semibold transition-all duration-200 text-sm
             ${hasSelectedMasks && !isPainting
-              ? 'bg-accent-500 text-white hover:bg-accent-600 shadow-md hover:shadow-lg'
-              : 'bg-gray-200 text-gray-500 cursor-not-allowed'
+              ? 'bg-gradient-to-r from-orange-500 to-orange-600 text-white hover:from-orange-600 hover:to-orange-700 shadow-lg hover:shadow-xl'
+              : 'bg-gray-100 text-gray-400 cursor-not-allowed'
             }
           `}
         >
@@ -127,10 +201,10 @@ const Toolbar: React.FC<ToolbarProps> = ({
           onClick={onDownloadImage}
           disabled={isDownloading}
           className={`
-            w-full flex items-center justify-center space-x-2 px-4 py-3 rounded-lg font-medium transition-all
+            w-full flex items-center justify-center space-x-2 px-3 py-3 rounded-xl font-semibold transition-all duration-200 text-sm
             ${!isDownloading
-              ? 'bg-green-500 text-white hover:bg-green-600 shadow-md hover:shadow-lg'
-              : 'bg-gray-200 text-gray-500 cursor-not-allowed'
+              ? 'bg-gradient-to-r from-emerald-500 to-emerald-600 text-white hover:from-emerald-600 hover:to-emerald-700 shadow-lg hover:shadow-xl'
+              : 'bg-gray-100 text-gray-400 cursor-not-allowed'
             }
           `}
         >
@@ -145,7 +219,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
         </motion.button>
 
         {/* Divider */}
-        <div className="border-t border-gray-200 my-4" />
+        <div className="border-t border-gray-200/50 my-4" />
 
         {/* Toggle All Masks Button */}
         <motion.button
@@ -154,14 +228,14 @@ const Toolbar: React.FC<ToolbarProps> = ({
           onClick={onToggleAllMasks}
           disabled={!hasMasks}
           className={`
-            w-full flex items-center justify-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium transition-all
+            w-full flex items-center justify-center space-x-2 px-3 py-2 rounded-xl text-xs font-semibold transition-all duration-200
             ${hasMasks
-              ? 'bg-secondary-100 text-secondary-700 hover:bg-secondary-200'
-              : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+              ? 'bg-gray-100 text-gray-700 hover:bg-gray-200 border border-gray-200'
+              : 'bg-gray-50 text-gray-400 cursor-not-allowed border border-gray-100'
             }
           `}
         >
-          <Eye className="w-4 h-4" />
+          <Eye className="w-3 h-3" />
           <span>Toggle All Masks</span>
         </motion.button>
 
@@ -170,38 +244,45 @@ const Toolbar: React.FC<ToolbarProps> = ({
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.98 }}
           onClick={onReset}
-          className="w-full flex items-center justify-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium bg-red-100 text-red-700 hover:bg-red-200 transition-all"
+          className="w-full flex items-center justify-center space-x-2 px-3 py-2 rounded-xl text-xs font-semibold bg-red-50 text-red-700 hover:bg-red-100 border border-red-200 transition-all duration-200"
         >
-          <RotateCcw className="w-4 h-4" />
+          <RotateCcw className="w-3 h-3" />
           <span>Reset All</span>
         </motion.button>
       </div>
 
       {/* Status Indicators */}
-      <div className="mt-6 space-y-2">
-        <div className="flex items-center justify-between text-xs text-gray-500">
-          <span>Image:</span>
-          <span className={hasImage ? 'text-green-600' : 'text-red-600'}>
-            {hasImage ? 'Loaded' : 'Not loaded'}
-          </span>
-        </div>
-        <div className="flex items-center justify-between text-xs text-gray-500">
-          <span>Masks:</span>
-          <span className={hasMasks ? 'text-green-600' : 'text-red-600'}>
-            {hasMasks ? 'Generated' : 'Not generated'}
-          </span>
-        </div>
-        <div className="flex items-center justify-between text-xs text-gray-500">
-          <span>Selection:</span>
-          <span className={hasSelectedMasks ? 'text-green-600' : 'text-red-600'}>
-            {hasSelectedMasks ? 'Active' : 'None'}
-          </span>
-        </div>
-        <div className="flex items-center justify-between text-xs text-gray-500">
-          <span>Click Mode:</span>
-          <span className={isClickToGenerateMode ? 'text-green-600' : 'text-gray-600'}>
-            {isClickToGenerateMode ? 'ON' : 'OFF'}
-          </span>
+      <div className="mt-4 p-3 bg-gray-50/50 rounded-xl border border-gray-200/50">
+        <h4 className="text-xs font-semibold text-gray-700 mb-3">Status</h4>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-gray-600 font-medium">Image:</span>
+            <div className={`flex items-center space-x-1 ${hasImage ? 'text-green-600' : 'text-red-600'}`}>
+              <div className={`w-2 h-2 rounded-full ${hasImage ? 'bg-green-500' : 'bg-red-500'}`}></div>
+              <span className="text-xs font-medium">{hasImage ? 'Loaded' : 'Not loaded'}</span>
+            </div>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-gray-600 font-medium">Masks:</span>
+            <div className={`flex items-center space-x-1 ${hasMasks ? 'text-green-600' : 'text-red-600'}`}>
+              <div className={`w-2 h-2 rounded-full ${hasMasks ? 'bg-green-500' : 'bg-red-500'}`}></div>
+              <span className="text-xs font-medium">{hasMasks ? 'Generated' : 'Not generated'}</span>
+            </div>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-gray-600 font-medium">Selection:</span>
+            <div className={`flex items-center space-x-1 ${hasSelectedMasks ? 'text-green-600' : 'text-gray-500'}`}>
+              <div className={`w-2 h-2 rounded-full ${hasSelectedMasks ? 'bg-green-500' : 'bg-gray-400'}`}></div>
+              <span className="text-xs font-medium">{hasSelectedMasks ? 'Active' : 'None'}</span>
+            </div>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-gray-600 font-medium">Click Mode:</span>
+            <div className={`flex items-center space-x-1 ${isClickToGenerateMode ? 'text-green-600' : 'text-gray-500'}`}>
+              <div className={`w-2 h-2 rounded-full ${isClickToGenerateMode ? 'bg-green-500' : 'bg-gray-400'}`}></div>
+              <span className="text-xs font-medium">{isClickToGenerateMode ? 'ON' : 'OFF'}</span>
+            </div>
+          </div>
         </div>
       </div>
     </div>

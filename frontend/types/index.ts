@@ -110,6 +110,7 @@ export interface AppState {
   showAllMasks: boolean;
   paintedImage: string | null;
   isGeneratingMasks: boolean;
+  isGeneratingAdvancedMasks: boolean;
   isPainting: boolean;
   isDownloading: boolean;
 }
@@ -142,12 +143,14 @@ export interface MaskGalleryProps {
 
 export interface ToolbarProps {
   onGenerateMasks: () => void;
+  onGenerateAdvancedMasks: () => void;
   onPaintMasks: () => void;
   onDownloadImage: () => void;
   onReset: () => void;
   onToggleAllMasks: () => void;
   onToggleClickToGenerate: () => void;
   isGeneratingMasks: boolean;
+  isGeneratingAdvancedMasks: boolean;
   isPainting: boolean;
   isDownloading: boolean;
   hasImage: boolean;

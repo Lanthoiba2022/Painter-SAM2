@@ -25,6 +25,7 @@ interface AppStore extends AppState {
   setShowAllMasks: (show: boolean) => void;
   setPaintedImage: (imageData: string | null) => void;
   setGeneratingMasks: (isGenerating: boolean) => void;
+  setGeneratingAdvancedMasks: (isGenerating: boolean) => void;
   setPainting: (isPainting: boolean) => void;
   setDownloading: (isDownloading: boolean) => void;
   setHoveredMaskId: (maskId: number | null) => void;
@@ -52,6 +53,7 @@ const initialState: AppState = {
   showAllMasks: false,
   paintedImage: null,
   isGeneratingMasks: false,
+  isGeneratingAdvancedMasks: false,
   isPainting: false,
   isDownloading: false,
 };
@@ -180,6 +182,9 @@ export const useAppStore = create<AppStore>()(
       setGeneratingMasks: (isGenerating: boolean) =>
         set({ isGeneratingMasks: isGenerating }, false, 'setGeneratingMasks'),
 
+      setGeneratingAdvancedMasks: (isGenerating: boolean) =>
+        set({ isGeneratingAdvancedMasks: isGenerating }, false, 'setGeneratingAdvancedMasks'),
+
       setPainting: (isPainting: boolean) =>
         set({ isPainting }, false, 'setPainting'),
 
@@ -198,7 +203,7 @@ export const useAppStore = create<AppStore>()(
         try {
           const response = await api.generateMaskAtPoint(sessionId, point);
           const newMask: MaskInfo = {
-            id: Date.now(), // Generate unique ID
+            id: Date.now() + Math.random(), // Generate unique ID
             mask: response.mask,
             score: response.score,
             // Calculate area from mask if needed
@@ -206,7 +211,7 @@ export const useAppStore = create<AppStore>()(
           };
           
           set((state) => {
-            // Add to masks array
+            // Add to masks array (don't clear existing masks)
             const updatedMasks = [...state.masks, newMask];
             
             // Auto-select the new mask
@@ -248,7 +253,7 @@ export const useAppStore = create<AppStore>()(
             imageWidth: 0,
             imageHeight: 0,
             filename: null,
-            masks: [],
+            masks: [], // Clear masks when image is reset
             selectedMasks: new Set(),
             coloredMasks: [], // Clear colored masks when image is reset
             paintedImage: null,
@@ -265,7 +270,7 @@ export const useAppStore = create<AppStore>()(
           {
             masks: [],
             selectedMasks: new Set(),
-            // Don't clear coloredMasks here - they should persist
+            // Don't clear coloredMasks - they should persist until session ends
             paintedImage: null,
             hoveredMaskId: null,
             isClickToGenerateMode: false,
@@ -309,6 +314,7 @@ export const useCurrentOpacity = () => useAppStore((state) => state.currentOpaci
 export const useShowAllMasks = () => useAppStore((state) => state.showAllMasks);
 export const usePaintedImage = () => useAppStore((state) => state.paintedImage);
 export const useGeneratingMasks = () => useAppStore((state) => state.isGeneratingMasks);
+export const useGeneratingAdvancedMasks = () => useAppStore((state) => state.isGeneratingAdvancedMasks);
 export const usePainting = () => useAppStore((state) => state.isPainting);
 export const useDownloading = () => useAppStore((state) => state.isDownloading);
 export const useHoveredMaskId = () => useAppStore((state) => state.hoveredMaskId);

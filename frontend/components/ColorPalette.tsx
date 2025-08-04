@@ -3,6 +3,7 @@
 import React from 'react';
 import { motion } from 'framer-motion';
 import { ColorPaletteProps } from '@/types';
+import { Palette } from 'lucide-react';
 
 const defaultColors = [
   '#FF6B6B', // Red
@@ -37,20 +38,25 @@ const ColorPalette: React.FC<ColorPaletteProps> = ({
   onColorSelect,
 }) => {
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-4">
-      <h3 className="text-sm font-medium text-gray-900 mb-3">Color Palette</h3>
+    <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl border border-gray-200/50 p-4">
+      <div className="flex items-center space-x-2 mb-4">
+        <div className="w-6 h-6 bg-gradient-to-r from-pink-500 to-purple-600 rounded-lg flex items-center justify-center">
+          <Palette className="w-3 h-3 text-white" />
+        </div>
+        <h3 className="text-base font-bold text-gray-900">Color Palette</h3>
+      </div>
       
-      <div className="grid grid-cols-6 gap-2 mb-4">
+      <div className="grid grid-cols-5 gap-2 mb-4">
         {colors.map((color, index) => (
           <motion.div
             key={index}
             whileHover={{ scale: 1.1 }}
             whileTap={{ scale: 0.95 }}
             className={`
-              w-8 h-8 rounded-lg cursor-pointer border-2 transition-all duration-200
+              w-10 h-10 rounded-xl cursor-pointer border-2 transition-all duration-200 shadow-sm
               ${selectedColor === color 
-                ? 'border-gray-800 shadow-lg scale-110' 
-                : 'border-gray-300 hover:border-gray-500'
+                ? 'border-gray-800 shadow-lg scale-110 ring-2 ring-gray-200' 
+                : 'border-gray-300 hover:border-gray-500 hover:shadow-md'
               }
             `}
             style={{ backgroundColor: color }}
@@ -61,45 +67,32 @@ const ColorPalette: React.FC<ColorPaletteProps> = ({
       </div>
       
       <div className="space-y-3">
-        <div>
-          <label className="block text-xs font-medium text-gray-700 mb-2">
+        <div className="p-3 bg-gray-50/50 rounded-xl border border-gray-200/50">
+          <label className="block text-xs font-semibold text-gray-700 mb-2">
             Selected Color
           </label>
           <div className="flex items-center space-x-3">
             <div
-              className="w-8 h-8 rounded-lg border-2 border-gray-300"
+              className="w-10 h-10 rounded-xl border-2 border-gray-300 shadow-sm"
               style={{ backgroundColor: selectedColor }}
             />
-            <span className="text-sm font-mono text-gray-600">
-              {selectedColor}
-            </span>
+            <div>
+              <span className="text-xs font-mono text-gray-600 font-medium">
+                {selectedColor}
+              </span>
+            </div>
           </div>
         </div>
         
-        <div>
-          <label className="block text-xs font-medium text-gray-700 mb-2">
-            Preview
+        <div className="p-3 bg-gray-50/50 rounded-xl border border-gray-200/50">
+          <label className="block text-xs font-semibold text-gray-700 mb-2">
+            Color Preview
           </label>
-          <div className="w-full h-12 rounded-lg border border-gray-300 overflow-hidden">
+          <div className="w-full h-12 rounded-xl border border-gray-300 overflow-hidden shadow-sm">
             <div
               className="w-full h-full"
               style={{ backgroundColor: selectedColor }}
             />
-          </div>
-        </div>
-      </div>
-      
-      <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-        <div className="flex items-start space-x-2">
-          <div className="w-4 h-4 bg-blue-500 rounded-full mt-0.5"></div>
-          <div className="text-sm text-blue-800">
-            <p className="font-medium mb-1">How to paint:</p>
-            <ul className="text-xs space-y-1">
-              <li>• Select masks from the gallery below</li>
-              <li>• Choose a color from this palette</li>
-              <li>• Click "Paint Selected Areas" to apply</li>
-              <li>• Download the final result</li>
-            </ul>
           </div>
         </div>
       </div>

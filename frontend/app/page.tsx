@@ -25,6 +25,7 @@ export default function HomePage() {
     showAllMasks,
     paintedImage,
     isGeneratingMasks,
+    isGeneratingAdvancedMasks,
     isPainting,
     isDownloading,
     error,
@@ -44,6 +45,7 @@ export default function HomePage() {
     setShowAllMasks,
     setPaintedImage,
     setGeneratingMasks,
+    setGeneratingAdvancedMasks,
     setPainting,
     setDownloading,
     setHoveredMaskId,
@@ -100,16 +102,17 @@ export default function HomePage() {
       setGeneratingMasks(true);
       setError(null);
       
-      toast.loading('Generating masks... This may take a few minutes.', { id: 'generate-masks' });
+      toast.loading('Generating masks with improved coverage...', { id: 'generate-masks' });
       
-      const response = await api.generateMasks(sessionId);
+      // Use improved parameters for better mask generation
+      const response = await api.generateMasks(sessionId, 96, 0.7, 0.8);
       
       setMasks(response.masks);
       clearSelectedMasks();
       
-      toast.success(`Generated ${response.total_masks} masks! Click on the image or select masks from the gallery below to start painting.`, { 
+      toast.success(`Generated ${response.total_masks} masks with improved coverage!`, { 
         id: 'generate-masks',
-        duration: 5000 
+        duration: 4000 
       });
       
     } catch (err) {
@@ -123,6 +126,39 @@ export default function HomePage() {
       setGeneratingMasks(false);
     }
   }, [sessionId, setMasks, clearSelectedMasks, setError, setGeneratingMasks]);
+
+  // Generate masks with advanced parameters for maximum coverage
+  const handleGenerateAdvancedMasks = useCallback(async () => {
+    if (!sessionId) return;
+    
+    try {
+      setGeneratingAdvancedMasks(true);
+      setError(null);
+      
+      toast.loading('Generating masks with maximum coverage...', { id: 'generate-advanced-masks' });
+      
+      // Use maximum coverage parameters
+      const response = await api.generateMasks(sessionId, 128, 0.6, 0.7);
+      
+      setMasks(response.masks);
+      clearSelectedMasks();
+      
+      toast.success(`Generated ${response.total_masks} masks with maximum coverage!`, { 
+        id: 'generate-advanced-masks',
+        duration: 4000 
+      });
+      
+    } catch (err) {
+      const errorMessage = handleApiError(err);
+      setError(errorMessage);
+      toast.error(`Failed to generate advanced masks: ${errorMessage}`, { 
+        id: 'generate-advanced-masks',
+        duration: 5000 
+      });
+    } finally {
+      setGeneratingAdvancedMasks(false);
+    }
+  }, [sessionId, setMasks, clearSelectedMasks, setError, setGeneratingAdvancedMasks]);
 
   // Handle point click for mask selection
   const handlePointClick = useCallback(async (x: number, y: number, isShiftClick: boolean = false, isRightClick: boolean = false) => {
@@ -184,7 +220,7 @@ export default function HomePage() {
     if (!isClickToGenerateMode) {
       toast.success('Click mode enabled! Click on areas to generate masks.');
     } else {
-      toast.success('Click mode disabled. You can now freely zoom and pan without generating masks.');
+      toast.success('Click mode disabled. You can now freely select existing masks.');
     }
   }, [isClickToGenerateMode, setClickToGenerateMode]);
 
@@ -345,6 +381,7 @@ export default function HomePage() {
   // Toggle all masks visibility
   const handleToggleAllMasks = useCallback(() => {
     setShowAllMasks(!showAllMasks);
+    toast.success(showAllMasks ? 'All masks hidden' : 'All masks visible');
   }, [showAllMasks, setShowAllMasks]);
 
   // Handle color selection
@@ -363,20 +400,20 @@ export default function HomePage() {
   }, [setHoveredMaskId]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
       {/* Header */}
-      <header className="bg-white shadow-sm border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <header className="bg-white/80 backdrop-blur-md shadow-sm border-b border-gray-200/50 sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center space-x-3">
-              <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
+              <div className="w-10 h-10 bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl flex items-center justify-center shadow-lg">
                 <span className="text-white font-bold text-sm">S2</span>
               </div>
               <h1 className="text-xl font-bold text-gray-900">
                 SAM2 Building Painter
               </h1>
             </div>
-            <div className="text-sm text-gray-500">
+            <div className="text-sm text-gray-500 font-medium">
               Powered by Meta AI
             </div>
           </div>
@@ -384,12 +421,13 @@ export default function HomePage() {
       </header>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
+      <main className="max-w-7xl mx-auto px-4 lg:px-6 py-6">
+        <div className="grid grid-cols-1 xl:grid-cols-8 gap-6">
           {/* Left Sidebar - Tools */}
-          <div className="lg:col-span-1 space-y-6">
+          <div className="xl:col-span-2 space-y-4">
             <Toolbar
               onGenerateMasks={handleGenerateMasks}
+              onGenerateAdvancedMasks={handleGenerateAdvancedMasks}
               onPaintMasks={handlePaintMasks}
               onDownloadImage={handleDownloadImage}
               onReset={handleReset}
@@ -402,6 +440,7 @@ export default function HomePage() {
               hasMasks={masks.length > 0}
               hasSelectedMasks={selectedMasks.size > 0}
               isClickToGenerateMode={isClickToGenerateMode}
+              isGeneratingAdvancedMasks={isGeneratingAdvancedMasks}
             />
             
             <ColorPalette
@@ -417,18 +456,21 @@ export default function HomePage() {
           </div>
 
           {/* Main Canvas Area */}
-          <div className="lg:col-span-4">
+          <div className="xl:col-span-6">
             {!imageData ? (
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="bg-white rounded-lg shadow-sm border border-gray-200 p-8"
+                className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl border border-gray-200/50 p-12"
               >
-                <div className="text-center">
-                  <h2 className="text-2xl font-bold text-gray-900 mb-4">
+                <div className="text-center max-w-4xl mx-auto">
+                  <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-xl">
+                    <span className="text-white font-bold text-xl">S2</span>
+                  </div>
+                  <h2 className="text-3xl font-bold text-gray-900 mb-4">
                     Welcome to SAM2 Building Painter
                   </h2>
-                  <p className="text-gray-600 mb-8 max-w-2xl mx-auto">
+                  <p className="text-gray-600 mb-8 max-w-2xl mx-auto text-lg leading-relaxed">
                     Upload an image of an Indian house or building, and use AI-powered segmentation 
                     to automatically identify walls and other architectural elements. Then paint them 
                     with beautiful colors to create stunning visualizations.
@@ -442,30 +484,38 @@ export default function HomePage() {
             ) : (
               <div className="space-y-6">
                 {/* Canvas */}
-                <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl border border-gray-200/50 p-6">
                   <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-semibold text-gray-900">
-                      Image Preview
-                    </h3>
-                    <div className="text-sm text-gray-500">
+                    <div className="flex items-center space-x-3">
+                      <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
+                        <span className="text-white font-bold text-xs">S2</span>
+                      </div>
+                      <h3 className="text-xl font-bold text-gray-900">
+                        Image Preview
+                      </h3>
+                    </div>
+                    <div className="flex items-center space-x-4 text-sm text-gray-500">
                       {masks.length > 0 && (
-                        <span className="mr-4">
-                          {masks.length} masks available
-                        </span>
+                        <div className="flex items-center space-x-2">
+                          <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                          <span>{masks.length} masks</span>
+                        </div>
                       )}
                       {selectedMasks.size > 0 && (
-                        <span className="mr-4">
-                          {selectedMasks.size} selected
-                        </span>
+                        <div className="flex items-center space-x-2">
+                          <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                          <span>{selectedMasks.size} selected</span>
+                        </div>
                       )}
                       {coloredMasks.length > 0 && (
-                        <span>
-                          {coloredMasks.length} colored
-                        </span>
+                        <div className="flex items-center space-x-2">
+                          <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
+                          <span>{coloredMasks.length} colored</span>
+                        </div>
                       )}
                     </div>
                   </div>
-                  <div className="w-full h-[600px] relative">
+                  <div className="w-full h-[600px] lg:h-[700px] xl:h-[750px] relative">
                     <InteractiveCanvas
                       imageData={imageData}
                       masks={masks}
@@ -495,16 +545,21 @@ export default function HomePage() {
                   <motion.div
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className="bg-white rounded-lg shadow-sm border border-gray-200 p-6"
+                    className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl border border-gray-200/50 p-6"
                   >
-                    <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                      Painted Result
-                    </h3>
+                    <div className="flex items-center space-x-3 mb-4">
+                      <div className="w-8 h-8 bg-gradient-to-r from-green-500 to-emerald-600 rounded-lg flex items-center justify-center">
+                        <span className="text-white font-bold text-xs">✓</span>
+                      </div>
+                      <h3 className="text-xl font-bold text-gray-900">
+                        Painted Result
+                      </h3>
+                    </div>
                     <div className="flex justify-center">
                       <img
                         src={`data:image/png;base64,${paintedImage}`}
                         alt="Painted building"
-                        className="max-w-full h-auto rounded-lg shadow-md"
+                        className="max-w-full h-auto rounded-xl shadow-lg"
                       />
                     </div>
                   </motion.div>
@@ -515,11 +570,11 @@ export default function HomePage() {
                   <motion.div
                     initial={{ opacity: 0, y: -10 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className="bg-red-50 border border-red-200 rounded-lg p-4"
+                    className="bg-red-50/80 backdrop-blur-sm border border-red-200/50 rounded-2xl p-4"
                   >
-                    <div className="flex items-center space-x-2">
-                      <div className="w-4 h-4 bg-red-500 rounded-full"></div>
-                      <p className="text-red-700">{error}</p>
+                    <div className="flex items-center space-x-3">
+                      <div className="w-5 h-5 bg-red-500 rounded-full"></div>
+                      <p className="text-red-700 font-medium">{error}</p>
                     </div>
                   </motion.div>
                 )}
@@ -530,8 +585,8 @@ export default function HomePage() {
       </main>
 
       {/* Footer */}
-      <footer className="bg-white border-t border-gray-200 mt-16">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <footer className="bg-white/80 backdrop-blur-md border-t border-gray-200/50 mt-16">
+        <div className="max-w-7xl mx-auto px-6 lg:px-8 py-8">
           <div className="text-center text-sm text-gray-500">
             <p>
               Built with Next.js, React Konva, and SAM2. 

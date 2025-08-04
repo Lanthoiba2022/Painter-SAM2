@@ -3,7 +3,7 @@
 import React, { useRef, useCallback, useState, useEffect } from 'react';
 import { CanvasProps } from '@/types';
 import { api } from '@/lib/api';
-import { MousePointer } from 'lucide-react'; // Added import for MousePointer icon
+import { MousePointer, X } from 'lucide-react';
 
 const InteractiveCanvas: React.FC<CanvasProps> = ({
   imageData,
@@ -20,13 +20,8 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const [imageElement, setImageElement] = useState<HTMLImageElement | null>(null);
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 600 });
-  const [scale, setScale] = useState(1);
-  const [offset, setOffset] = useState({ x: 0, y: 0 });
-  const [isDragging, setIsDragging] = useState(false);
-  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
-  const [hoveredMaskId, setHoveredMaskId] = useState<number | null>(null);
-  const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
   const [showInstructions, setShowInstructions] = useState(true);
+  const [hoveredMaskId, setHoveredMaskId] = useState<number | null>(null);
 
   // Load image and calculate canvas size
   useEffect(() => {
@@ -41,7 +36,7 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
     }
   }, [imageData]);
 
-  // Update canvas size to fit container
+  // Update canvas size to fit container with proper aspect ratio
   const updateCanvasSize = useCallback((img: HTMLImageElement) => {
     if (!containerRef.current) return;
 
@@ -56,17 +51,16 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
     let canvasWidth, canvasHeight;
     
     if (imgAspectRatio > containerAspectRatio) {
-      // Image is wider than container
+      // Image is wider than container - fit to width
       canvasWidth = containerWidth;
       canvasHeight = containerWidth / imgAspectRatio;
     } else {
-      // Image is taller than container
+      // Image is taller than container - fit to height
       canvasHeight = containerHeight;
       canvasWidth = containerHeight * imgAspectRatio;
     }
     
     setCanvasSize({ width: canvasWidth, height: canvasHeight });
-    setScale(Math.min(canvasWidth / img.width, canvasHeight / img.height));
   }, []);
 
   // Handle window resize
@@ -85,37 +79,18 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
   const canvasToImageCoords = useCallback((canvasX: number, canvasY: number) => {
     if (!imageElement) return { x: 0, y: 0 };
     
-    const imageX = (canvasX - offset.x) / scale;
-    const imageY = (canvasY - offset.y) / scale;
+    const scale = Math.min(canvasSize.width / imageElement.width, canvasSize.height / imageElement.height);
+    const offsetX = (canvasSize.width - imageElement.width * scale) / 2;
+    const offsetY = (canvasSize.height - imageElement.height * scale) / 2;
+    
+    const imageX = (canvasX - offsetX) / scale;
+    const imageY = (canvasY - offsetY) / scale;
     
     return {
       x: Math.round(imageX),
       y: Math.round(imageY)
     };
-  }, [imageElement, offset, scale]);
-
-  // Find mask at point by checking mask data
-  const findMaskAtPoint = useCallback(async (x: number, y: number) => {
-    if (!imageElement || masks.length === 0) return null;
-    
-    // For now, we'll use a simple approach to find the mask at point
-    // In a real implementation, you'd check the actual mask data
-    // For demo purposes, we'll return the first mask that might contain this point
-    return masks.find(mask => {
-      // Simple heuristic: check if point is within a reasonable area of the mask
-      // This is a placeholder - in reality you'd decode the mask and check the pixel
-      return true; // For now, return first mask
-    }) || null;
-  }, [imageElement, masks]);
-
-  // Improved hover detection with actual mask checking
-  const findMaskAtPointImproved = useCallback(async (x: number, y: number) => {
-    if (!imageElement || masks.length === 0) return null;
-    
-    // For now, return the first mask as a simple implementation
-    // In a real implementation, you'd decode each mask and check if the point is inside
-    return masks[0] || null;
-  }, [imageElement, masks]);
+  }, [imageElement, canvasSize]);
 
   // Draw function with improved mask rendering
   const drawCanvas = useCallback(() => {
@@ -128,25 +103,26 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
     // Clear canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Draw background image
+    // Calculate scale and offset to center the image
+    const scale = Math.min(canvasSize.width / imageElement.width, canvasSize.height / imageElement.height);
+    const offsetX = (canvasSize.width - imageElement.width * scale) / 2;
+    const offsetY = (canvasSize.height - imageElement.height * scale) / 2;
+
+    // Draw background image centered
     ctx.save();
-    ctx.translate(offset.x, offset.y);
+    ctx.translate(offsetX, offsetY);
     ctx.scale(scale, scale);
     ctx.drawImage(imageElement, 0, 0);
     ctx.restore();
-
-    console.log(`Drawing ${coloredMasks.length} colored masks`);
 
     // Draw colored masks (persistent)
     coloredMasks.forEach((coloredMask, index) => {
       const mask = masks.find(m => m.id === coloredMask.mask_id);
       if (mask) {
-        console.log(`Drawing colored mask ${index + 1}/${coloredMasks.length}: ID ${coloredMask.mask_id}, Color ${coloredMask.color}`);
-        
         const maskImg = new Image();
         maskImg.onload = () => {
           ctx.save();
-          ctx.translate(offset.x, offset.y);
+          ctx.translate(offsetX, offsetY);
           ctx.scale(scale, scale);
           
           // Create a temporary canvas for mask compositing
@@ -192,95 +168,83 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
           ctx.restore();
         };
         maskImg.src = `data:image/png;base64,${mask.mask}`;
-      } else {
-        console.warn(`Mask with ID ${coloredMask.mask_id} not found in masks array`);
       }
     });
 
-    // Draw selection and hover overlays
-    const masksToDraw: Array<{ mask: any; isSelected: boolean; isHovered: boolean }> = [];
-
-    // Add selected and hovered masks (but not colored ones)
-    masks.forEach(mask => {
+    // Draw masks based on state
+    masks.forEach((mask) => {
       const isSelected = selectedMasks.has(mask.id);
       const isHovered = hoveredMaskId === mask.id;
-      const isColored = coloredMasks.some(cm => cm.mask_id === mask.id);
       
-      // Only draw selection/hover overlays for non-colored masks
-      if (!isColored && (isSelected || isHovered)) {
-        masksToDraw.push({
-          mask,
-          isSelected,
-          isHovered
-        });
+      // Only draw masks if they are selected, hovered, or if we're showing all masks
+      if (isSelected || isHovered || showAllMasks) {
+        const maskImg = new Image();
+        maskImg.onload = () => {
+          ctx.save();
+          ctx.translate(offsetX, offsetY);
+          ctx.scale(scale, scale);
+          
+          // Create a temporary canvas for mask compositing
+          const tempCanvas = document.createElement('canvas');
+          const tempCtx = tempCanvas.getContext('2d');
+          if (!tempCtx) return;
+          
+          tempCanvas.width = imageElement.width;
+          tempCanvas.height = imageElement.height;
+          
+          // Draw the mask to temp canvas
+          tempCtx.drawImage(maskImg, 0, 0);
+          
+          // Get mask data
+          const maskData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+          
+          // Determine color and opacity based on state
+          let fillColor = '#4ecdc4';
+          let opacity = 0.5;
+          
+          if (isSelected) {
+            fillColor = '#ff6b6b';
+            opacity = 0.6;
+          } else if (isHovered) {
+            fillColor = '#4ecdc4';
+            opacity = 0.5;
+          } else if (showAllMasks) {
+            fillColor = '#95a5a6';
+            opacity = 0.3;
+          }
+          
+          // Create colored overlay only where mask is white
+          const coloredOverlay = document.createElement('canvas');
+          const overlayCtx = coloredOverlay.getContext('2d');
+          if (!overlayCtx) return;
+          
+          coloredOverlay.width = imageElement.width;
+          coloredOverlay.height = imageElement.height;
+          
+          // Fill with color
+          overlayCtx.fillStyle = fillColor;
+          overlayCtx.fillRect(0, 0, imageElement.width, imageElement.height);
+          
+          // Apply mask to color overlay
+          const overlayData = overlayCtx.getImageData(0, 0, imageElement.width, imageElement.height);
+          for (let i = 0; i < maskData.data.length; i += 4) {
+            const maskValue = maskData.data[i]; // Use red channel as mask
+            const alpha = maskValue / 255 * opacity;
+            overlayData.data[i + 3] = Math.round(overlayData.data[i + 3] * alpha); // Set alpha
+          }
+          
+          overlayCtx.putImageData(overlayData, 0, 0);
+          
+          // Draw the colored overlay
+          ctx.globalCompositeOperation = 'source-over';
+          ctx.drawImage(coloredOverlay, 0, 0);
+          
+          ctx.restore();
+        };
+        maskImg.src = `data:image/png;base64,${mask.mask}`;
       }
     });
-
-    // Draw selection and hover overlays
-    masksToDraw.forEach(({ mask, isSelected, isHovered }) => {
-      const maskImg = new Image();
-      maskImg.onload = () => {
-        ctx.save();
-        ctx.translate(offset.x, offset.y);
-        ctx.scale(scale, scale);
-        
-        // Create a temporary canvas for mask compositing
-        const tempCanvas = document.createElement('canvas');
-        const tempCtx = tempCanvas.getContext('2d');
-        if (!tempCtx) return;
-        
-        tempCanvas.width = imageElement.width;
-        tempCanvas.height = imageElement.height;
-        
-        // Draw the mask to temp canvas
-        tempCtx.drawImage(maskImg, 0, 0);
-        
-        // Get mask data
-        const maskData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
-        
-        // Determine color and opacity based on state
-        let fillColor = '#4ecdc4';
-        let opacity = 0.5;
-        
-        if (isSelected) {
-          fillColor = '#ff6b6b';
-          opacity = 0.6;
-        } else if (isHovered) {
-          fillColor = '#4ecdc4';
-          opacity = 0.5;
-        }
-        
-        // Create colored overlay only where mask is white
-        const coloredOverlay = document.createElement('canvas');
-        const overlayCtx = coloredOverlay.getContext('2d');
-        if (!overlayCtx) return;
-        
-        coloredOverlay.width = imageElement.width;
-        coloredOverlay.height = imageElement.height;
-        
-        // Fill with color
-        overlayCtx.fillStyle = fillColor;
-        overlayCtx.fillRect(0, 0, imageElement.width, imageElement.height);
-        
-        // Apply mask to color overlay
-        const overlayData = overlayCtx.getImageData(0, 0, imageElement.width, imageElement.height);
-        for (let i = 0; i < maskData.data.length; i += 4) {
-          const maskValue = maskData.data[i]; // Use red channel as mask
-          const alpha = maskValue / 255 * opacity;
-          overlayData.data[i + 3] = Math.round(overlayData.data[i + 3] * alpha); // Set alpha
-        }
-        
-        overlayCtx.putImageData(overlayData, 0, 0);
-        
-        // Draw the colored overlay
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.drawImage(coloredOverlay, 0, 0);
-        
-        ctx.restore();
-      };
-      maskImg.src = `data:image/png;base64,${mask.mask}`;
-    });
-  }, [imageElement, masks, selectedMasks, coloredMasks, hoveredMaskId, scale, offset]);
+  }, [imageElement, masks, selectedMasks, coloredMasks, hoveredMaskId, canvasSize, showAllMasks]);
 
   // Redraw when dependencies change
   useEffect(() => {
@@ -290,46 +254,57 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
   // Additional redraw when colored masks change
   useEffect(() => {
     if (coloredMasks.length > 0) {
-      console.log('Colored masks updated, redrawing canvas');
       drawCanvas();
     }
   }, [coloredMasks.length, drawCanvas]);
 
-  // Handle mouse move for hover detection
-  const handleMouseMove = useCallback(async (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!imageElement) return;
+  // Utility: Check if a point is inside a mask (pixel hit-test)
+  function isPointInMask(maskBase64: string, x: number, y: number, imageWidth: number, imageHeight: number): boolean {
+    try {
+      const img = new window.Image();
+      img.src = `data:image/png;base64,${maskBase64}`;
+      // Create a temporary canvas
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = imageWidth;
+      tempCanvas.height = imageHeight;
+      const ctx = tempCanvas.getContext('2d');
+      if (!ctx) return false;
+      ctx.drawImage(img, 0, 0);
+      const pixel = ctx.getImageData(x, y, 1, 1).data;
+      // If alpha > 0, the point is inside the mask
+      return pixel[3] > 0;
+    } catch {
+      return false;
+    }
+  }
 
+  // Handle mouse move for hover detection (no backend call)
+  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!imageElement || masks.length === 0) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
-
     const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    
-    setMousePosition({ x, y });
-    
+    const x = Math.round(e.clientX - rect.left);
+    const y = Math.round(e.clientY - rect.top);
     // Convert to image coordinates
     const imageCoords = canvasToImageCoords(x, y);
-    
-    // Check if mouse is within image bounds
-    if (imageCoords.x >= 0 && imageCoords.x <= imageElement.width && 
-        imageCoords.y >= 0 && imageCoords.y <= imageElement.height) {
-      
-      // Find mask at point for hover effect
-      const maskAtPoint = await findMaskAtPointImproved(imageCoords.x, imageCoords.y);
-      setHoveredMaskId(maskAtPoint?.id || null);
+    if (
+      imageCoords.x >= 0 && imageCoords.x < imageElement.width &&
+      imageCoords.y >= 0 && imageCoords.y < imageElement.height
+    ) {
+      // Find the topmost mask under the cursor
+      let foundMaskId: number | null = null;
+      for (let i = masks.length - 1; i >= 0; i--) {
+        if (isPointInMask(masks[i].mask, imageCoords.x, imageCoords.y, imageElement.width, imageElement.height)) {
+          foundMaskId = masks[i].id;
+          break;
+        }
+      }
+      setHoveredMaskId(foundMaskId);
     } else {
       setHoveredMaskId(null);
     }
-
-    // Handle dragging
-    if (isDragging) {
-      setOffset({
-        x: e.clientX - dragStart.x,
-        y: e.clientY - dragStart.y,
-      });
-    }
-  }, [imageElement, canvasToImageCoords, findMaskAtPointImproved, isDragging, dragStart]);
+  }, [imageElement, masks, canvasToImageCoords]);
 
   // Handle canvas click
   const handleCanvasClick = useCallback(
@@ -350,16 +325,21 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
       if (imageCoords.x >= 0 && imageCoords.x <= imageElement.width && 
           imageCoords.y >= 0 && imageCoords.y <= imageElement.height) {
         
-        // Handle shift+click for adding to selection
-        if (e.shiftKey) {
-          onPointClick(imageCoords.x, imageCoords.y, true, false);
-        } else {
-          // Regular click
-          onPointClick(imageCoords.x, imageCoords.y, false, false);
+        // If we have masks and we're hovering over one, select it
+        if (masks.length > 0 && hoveredMaskId !== null) {
+          // Toggle selection of the hovered mask
+          onMaskSelect(hoveredMaskId, !selectedMasks.has(hoveredMaskId));
+        } else if (isClickToGenerateMode) {
+          // Only call onPointClick if click mode is active and no mask is under cursor
+          if (e.shiftKey) {
+            onPointClick(imageCoords.x, imageCoords.y, true, false);
+          } else {
+            onPointClick(imageCoords.x, imageCoords.y, false, false);
+          }
         }
       }
     },
-    [imageElement, canvasToImageCoords, onPointClick]
+    [imageElement, canvasToImageCoords, onPointClick, onMaskSelect, masks.length, isClickToGenerateMode, hoveredMaskId, selectedMasks]
   );
 
   // Handle right click for removing from selection
@@ -391,126 +371,94 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
     }
   }, [imageElement, canvasToImageCoords, onPointClick]);
 
-  // Handle mouse events for dragging
-  const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    setIsDragging(true);
-    setDragStart({ x: e.clientX - offset.x, y: e.clientY - offset.y });
-  }, [offset]);
-
-  const handleMouseUp = useCallback(() => {
-    setIsDragging(false);
-  }, []);
-
-  // Handle wheel for zooming
-  const handleWheel = useCallback((e: React.WheelEvent<HTMLCanvasElement>) => {
-    e.preventDefault();
-    const scaleBy = 1.1;
-    const newScale = e.deltaY > 0 ? scale / scaleBy : scale * scaleBy;
-    setScale(Math.max(0.1, Math.min(5, newScale)));
-  }, [scale]);
-
   if (!imageElement) {
     return (
-      <div className="flex items-center justify-center w-full h-96 bg-gray-100 rounded-lg">
-        <div className="text-gray-500">Loading image...</div>
+      <div className="flex items-center justify-center w-full h-full min-h-[600px] bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl border-2 border-dashed border-gray-300">
+        <div className="text-center">
+          <div className="w-16 h-16 bg-gray-200 rounded-full flex items-center justify-center mx-auto mb-4">
+            <div className="w-8 h-8 bg-gray-400 rounded-full animate-pulse"></div>
+          </div>
+          <p className="text-gray-500 font-medium">Loading image...</p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div ref={containerRef} className="canvas-container relative w-full h-full min-h-[600px]">
+    <div ref={containerRef} className="relative w-full h-full min-h-[700px] bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl border border-gray-200 overflow-hidden shadow-lg">
       <canvas
         ref={canvasRef}
         width={canvasSize.width}
         height={canvasSize.height}
-        className={`border border-gray-300 rounded-lg transition-all ${
+        className={`w-full h-full object-contain transition-all duration-300 ${
           isClickToGenerateMode 
-            ? 'cursor-crosshair border-green-400 bg-green-50' 
-            : 'cursor-crosshair'
-        } w-full h-full object-contain`}
+            ? 'cursor-crosshair' 
+            : 'cursor-pointer'
+        }`}
         onClick={handleCanvasClick}
         onContextMenu={handleContextMenu}
-        onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
-        onWheel={handleWheel}
       />
       
       {/* Click Mode Indicator */}
       {isClickToGenerateMode && (
-        <div className="absolute top-4 left-4 bg-green-500 text-white px-3 py-2 rounded-lg shadow-lg">
-          <div className="flex items-center space-x-2">
-            <MousePointer className="w-4 h-4" />
-            <span className="text-sm font-medium">Click Mode Active</span>
+        <div className="absolute top-6 left-6 bg-gradient-to-r from-green-500 to-green-600 text-white px-4 py-3 rounded-xl shadow-xl backdrop-blur-sm border border-green-400/20">
+          <div className="flex items-center space-x-3">
+            <div className="w-8 h-8 bg-white/20 rounded-full flex items-center justify-center">
+              <MousePointer className="w-4 h-4" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold">Click Mode Active</p>
+              <p className="text-xs opacity-90">Click to generate masks</p>
+            </div>
           </div>
         </div>
       )}
       
-      {/* Clean Instructions Panel */}
+      {/* Modern Instructions Panel */}
       {showInstructions && (
-        <div className="absolute top-4 left-4 bg-white/95 backdrop-blur-sm border border-gray-200 rounded-lg p-4 shadow-lg max-w-xs">
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-semibold text-gray-900">How to Use</h3>
+        <div className="absolute top-6 left-6 bg-white/95 backdrop-blur-md border border-gray-200/50 rounded-xl p-5 shadow-xl max-w-sm">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-bold text-gray-900">How to Use</h3>
             <button
               onClick={() => setShowInstructions(false)}
-              className="text-gray-400 hover:text-gray-600"
+              className="w-6 h-6 bg-gray-100 hover:bg-gray-200 rounded-full flex items-center justify-center transition-colors"
             >
-              ×
+              <X className="w-3 h-3 text-gray-600" />
             </button>
           </div>
-          <div className="text-xs text-gray-600 space-y-1">
-            <p>• Click to select areas</p>
-            <p>• Shift+click to add to selection</p>
-            <p>• Shift+right-click to remove</p>
-            <p>• Drag to pan, scroll to zoom</p>
+          <div className="space-y-2 text-xs text-gray-600">
+            <div className="flex items-center space-x-2">
+              <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+              <span>Click to select areas</span>
+            </div>
+            <div className="flex items-center space-x-2">
+              <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+              <span>Shift+click to add to selection</span>
+            </div>
+            <div className="flex items-center space-x-2">
+              <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
+              <span>Shift+right-click to remove</span>
+            </div>
           </div>
         </div>
       )}
       
-      {/* Clean Status Panel */}
-      <div className="absolute bottom-4 left-4 bg-white/95 backdrop-blur-sm border border-gray-200 rounded-lg p-3 shadow-lg">
-        <div className="text-xs text-gray-600 space-y-1">
-          <div className="flex items-center space-x-2">
-            <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
-            <span>Masks: {masks.length}</span>
+      {/* Modern Status Panel */}
+      <div className="absolute bottom-6 left-6 bg-white/95 backdrop-blur-md border border-gray-200/50 rounded-xl p-4 shadow-xl">
+        <div className="space-y-3">
+          <div className="flex items-center space-x-3">
+            <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
+            <span className="text-sm font-medium text-gray-700">Masks: {masks.length}</span>
           </div>
-          <div className="flex items-center space-x-2">
-            <span className="w-2 h-2 bg-green-500 rounded-full"></span>
-            <span>Selected: {selectedMasks.size}</span>
+          <div className="flex items-center space-x-3">
+            <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+            <span className="text-sm font-medium text-gray-700">Selected: {selectedMasks.size}</span>
           </div>
-          <div className="flex items-center space-x-2">
-            <span className="w-2 h-2 bg-purple-500 rounded-full"></span>
-            <span>Colored: {coloredMasks.length}</span>
+          <div className="flex items-center space-x-3">
+            <div className="w-3 h-3 bg-purple-500 rounded-full"></div>
+            <span className="text-sm font-medium text-gray-700">Colored: {coloredMasks.length}</span>
           </div>
-        </div>
-      </div>
-      
-      {/* Clean Zoom Controls */}
-      <div className="absolute top-4 right-4 bg-white/95 backdrop-blur-sm border border-gray-200 rounded-lg p-3 shadow-lg">
-        <div className="text-xs text-gray-600 mb-2">
-          Zoom: {Math.round(scale * 100)}%
-        </div>
-        <div className="flex space-x-1">
-          <button
-            onClick={() => setScale(Math.min(5, scale * 1.2))}
-            className="w-6 h-6 bg-blue-500 text-white rounded text-xs hover:bg-blue-600 transition-colors"
-          >
-            +
-          </button>
-          <button
-            onClick={() => setScale(Math.max(0.1, scale / 1.2))}
-            className="w-6 h-6 bg-blue-500 text-white rounded text-xs hover:bg-blue-600 transition-colors"
-          >
-            -
-          </button>
-        </div>
-      </div>
-
-      {/* Mouse Position Indicator */}
-      <div className="absolute bottom-4 right-4 bg-white/95 backdrop-blur-sm border border-gray-200 rounded-lg p-3 shadow-lg">
-        <div className="text-xs text-gray-600">
-          Mouse: {Math.round(mousePosition.x)}, {Math.round(mousePosition.y)}
         </div>
       </div>
     </div>

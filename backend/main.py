@@ -94,9 +94,9 @@ class SessionResponse(BaseModel):
 # New models for comprehensive functionality
 class GenerateMasksRequest(BaseModel):
     session_id: str
-    points_per_side: Optional[int] = 32
-    pred_iou_thresh: Optional[float] = 0.88
-    stability_score_thresh: Optional[float] = 0.95
+    points_per_side: Optional[int] = 96  # Increased from 32 for better coverage
+    pred_iou_thresh: Optional[float] = 0.7  # Lowered from 0.88 for more masks
+    stability_score_thresh: Optional[float] = 0.8  # Lowered from 0.95 for more masks
 
 class MaskInfo(BaseModel):
     id: int
@@ -356,8 +356,8 @@ def paint_multiple_masks_local(image_data: str, colored_masks: List[Dict[str, An
 class SAM2Service:
     def __init__(self):
         # Modal endpoints - using the deployed Modal app
-        self.modal_base_url = os.getenv("MODAL_BASE_URL", "https://luckyonline022--sam2-building-painter-fastapi-app-modal.modal.run")
-        self.modal_health_url = os.getenv("MODAL_HEALTH_URL", "https://luckyonline022--sam2-building-painter-fastapi-app-modal.modal.run/health")
+        self.modal_base_url = os.getenv("MODAL_BASE_URL", "https://internship304--sam2-building-painter-fastapi-app-modal.modal.run")
+        self.modal_health_url = os.getenv("MODAL_HEALTH_URL", "https://internship304--sam2-building-painter-fastapi-app-modal.modal.run/health")
         logger.info(f"Initialized SAM2Service with Modal endpoint: {self.modal_base_url}")
         
     async def segment_image(self, image_data: str, points: Optional[List[Point]] = None, 
@@ -399,9 +399,9 @@ class SAM2Service:
             logger.error(f"Error segmenting image: {str(e)}")
             raise e
     
-    async def generate_all_masks(self, image_data: str, points_per_side: int = 32,
-                                pred_iou_thresh: float = 0.88, 
-                                stability_score_thresh: float = 0.95) -> Dict[str, Any]:
+    async def generate_all_masks(self, image_data: str, points_per_side: int = 96,
+                                pred_iou_thresh: float = 0.7, 
+                                stability_score_thresh: float = 0.8) -> Dict[str, Any]:
         """Generate all possible masks for the entire image"""
         try:
             payload = {
@@ -808,11 +808,16 @@ async def segment_image(request: SegmentationRequest):
         logger.error(f"Failed to segment image: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to segment image: {str(e)}")
 
+# In the /generate-masks endpoint, set higher points_per_side and lower thresholds by default
 @app.post("/generate-masks", response_model=GenerateMasksResponse)
 async def generate_masks(request: GenerateMasksRequest):
-    """Generate all possible masks for an image"""
+    """Generate all possible masks for an image with improved parameters for better coverage"""
     try:
         session_id = request.session_id
+        # Improved default parameters for better mask generation
+        points_per_side = request.points_per_side or 96  # Increased from 32 for more coverage
+        pred_iou_thresh = request.pred_iou_thresh or 0.7  # Lowered from 0.88 for more masks
+        stability_score_thresh = request.stability_score_thresh or 0.8  # Lowered from 0.95 for more masks
         
         if session_id not in sessions:
             raise HTTPException(status_code=404, detail="Session not found")
@@ -822,9 +827,9 @@ async def generate_masks(request: GenerateMasksRequest):
         # Call SAM2 service with improved parameters for better mask generation
         result = await sam2_service.generate_all_masks(
             session_data['image_data'],
-            points_per_side=request.points_per_side or 64,  # Reduced to prevent memory issues
-            pred_iou_thresh=request.pred_iou_thresh or 0.75,  # Balanced threshold for good coverage
-            stability_score_thresh=request.stability_score_thresh or 0.80  # Balanced threshold for good coverage
+            points_per_side=points_per_side,
+            pred_iou_thresh=pred_iou_thresh,
+            stability_score_thresh=stability_score_thresh
         )
         
         # Store masks in session for later use
@@ -855,6 +860,58 @@ async def generate_masks(request: GenerateMasksRequest):
     except Exception as e:
         logger.error(f"Failed to generate masks: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to generate masks: {str(e)}")
+
+@app.post("/generate-masks-advanced", response_model=GenerateMasksResponse)
+async def generate_masks_advanced(request: GenerateMasksRequest):
+    """Generate masks with advanced parameters for maximum coverage"""
+    try:
+        session_id = request.session_id
+        # Use even more aggressive parameters for maximum coverage
+        points_per_side = request.points_per_side or 128  # Maximum density
+        pred_iou_thresh = request.pred_iou_thresh or 0.6  # Very low threshold for maximum masks
+        stability_score_thresh = request.stability_score_thresh or 0.7  # Lower threshold for more masks
+        
+        if session_id not in sessions:
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        session_data = sessions[session_id]
+        
+        # Call SAM2 service with maximum coverage parameters
+        result = await sam2_service.generate_all_masks(
+            session_data['image_data'],
+            points_per_side=points_per_side,
+            pred_iou_thresh=pred_iou_thresh,
+            stability_score_thresh=stability_score_thresh
+        )
+        
+        # Store masks in session for later use
+        stored_masks = {}
+        for mask_info in result['masks']:
+            mask_id = mask_info['id']
+            stored_masks[mask_id] = {
+                'mask': mask_info['mask'],
+                'score': mask_info.get('score'),
+                'bbox': mask_info.get('bbox'),
+                'area': mask_info.get('area'),
+                'stability_score': mask_info.get('stability_score')
+            }
+        
+        # Update session with stored masks
+        sessions[session_id]['stored_masks'] = stored_masks
+        
+        return GenerateMasksResponse(
+            session_id=session_id,
+            masks=[MaskInfo(**mask_info) for mask_info in result['masks']],
+            total_masks=result['total_masks'],
+            width=result['width'],
+            height=result['height']
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to generate advanced masks: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate advanced masks: {str(e)}")
 
 @app.post("/combine-masks", response_model=CombineMasksResponse)
 async def combine_masks(request: CombineMasksRequest):
