@@ -94,6 +94,65 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
     };
   }, [imageElement, canvasSize]);
 
+  // Utility: Check if a point is inside a mask (pixel hit-test)
+  const isPointInMask = useCallback((maskId: number, x: number, y: number): boolean => {
+    try {
+      // Check bounds first
+      if (!imageElement || x < 0 || x >= imageElement.width || y < 0 || y >= imageElement.height) {
+        return false;
+      }
+      
+      // Get the pre-loaded mask image
+      const maskImage = loadedMaskImages.get(maskId);
+      if (!maskImage) {
+        return false;
+      }
+      
+      // Create a temporary canvas
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = imageElement.width;
+      tempCanvas.height = imageElement.height;
+      const ctx = tempCanvas.getContext('2d');
+      if (!ctx) return false;
+      
+      // Draw the mask and check pixel
+      ctx.drawImage(maskImage, 0, 0);
+      const pixel = ctx.getImageData(x, y, 1, 1).data;
+      
+      // Check if the pixel has any alpha value (indicating mask presence)
+      return pixel[3] > 0;
+    } catch (error) {
+      // If there's any error, return false
+      return false;
+    }
+  }, [imageElement, loadedMaskImages]);
+
+  // Pre-load mask images for better hover detection
+  useEffect(() => {
+    if (masks.length > 0 && imageElement) {
+      const newLoadedImages = new Map<number, HTMLImageElement>();
+      
+      const loadPromises = masks.map((mask) => {
+        return new Promise<void>((resolve) => {
+          const img = new Image();
+          img.onload = () => {
+            newLoadedImages.set(mask.id, img);
+            resolve();
+          };
+          img.onerror = () => {
+            console.warn(`Failed to load mask ${mask.id}`);
+            resolve();
+          };
+          img.src = `data:image/png;base64,${mask.mask}`;
+        });
+      });
+
+      Promise.all(loadPromises).then(() => {
+        setLoadedMaskImages(new Map(newLoadedImages));
+      });
+    }
+  }, [masks, imageElement]);
+
   // Draw function with improved mask rendering
   const drawCanvas = useCallback(() => {
     const canvas = canvasRef.current;
@@ -117,164 +176,99 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
     ctx.drawImage(imageElement, 0, 0);
     ctx.restore();
 
-    // Draw colored masks (persistent)
-    coloredMasks.forEach((coloredMask, index) => {
+    // Function to draw a single mask with given color and opacity
+    const drawMask = (mask: any, fillColor: string, opacity: number) => {
+      const maskImg = loadedMaskImages.get(mask.id);
+      if (!maskImg) return;
+
+      ctx.save();
+      ctx.translate(offsetX, offsetY);
+      ctx.scale(scale, scale);
+      
+      // Create a temporary canvas for mask compositing
+      const tempCanvas = document.createElement('canvas');
+      const tempCtx = tempCanvas.getContext('2d');
+      if (!tempCtx) return;
+      
+      tempCanvas.width = imageElement.width;
+      tempCanvas.height = imageElement.height;
+      
+      // Draw the mask to temp canvas
+      tempCtx.drawImage(maskImg, 0, 0);
+      
+      // Get mask data
+      const maskData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+      
+      // Create colored overlay only where mask is white
+      const coloredOverlay = document.createElement('canvas');
+      const overlayCtx = coloredOverlay.getContext('2d');
+      if (!overlayCtx) return;
+      
+      coloredOverlay.width = imageElement.width;
+      coloredOverlay.height = imageElement.height;
+      
+      // Fill with color
+      overlayCtx.fillStyle = fillColor;
+      overlayCtx.fillRect(0, 0, imageElement.width, imageElement.height);
+      
+      // Apply mask to color overlay
+      const overlayData = overlayCtx.getImageData(0, 0, imageElement.width, imageElement.height);
+      for (let i = 0; i < maskData.data.length; i += 4) {
+        const maskValue = maskData.data[i]; // Use red channel as mask
+        const alpha = maskValue / 255 * opacity;
+        overlayData.data[i + 3] = Math.round(overlayData.data[i + 3] * alpha); // Set alpha
+      }
+      
+      overlayCtx.putImageData(overlayData, 0, 0);
+      
+      // Draw the colored overlay
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.drawImage(coloredOverlay, 0, 0);
+      
+      ctx.restore();
+    };
+
+    // Draw colored masks (persistent) - lowest priority
+    coloredMasks.forEach((coloredMask) => {
       const mask = masks.find(m => m.id === coloredMask.mask_id);
       if (mask) {
-        const maskImg = new Image();
-        maskImg.onload = () => {
-          ctx.save();
-          ctx.translate(offsetX, offsetY);
-          ctx.scale(scale, scale);
-          
-          // Create a temporary canvas for mask compositing
-          const tempCanvas = document.createElement('canvas');
-          const tempCtx = tempCanvas.getContext('2d');
-          if (!tempCtx) return;
-          
-          tempCanvas.width = imageElement.width;
-          tempCanvas.height = imageElement.height;
-          
-          // Draw the mask to temp canvas
-          tempCtx.drawImage(maskImg, 0, 0);
-          
-          // Get mask data
-          const maskData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
-          
-          // Create colored overlay only where mask is white
-          const coloredOverlay = document.createElement('canvas');
-          const overlayCtx = coloredOverlay.getContext('2d');
-          if (!overlayCtx) return;
-          
-          coloredOverlay.width = imageElement.width;
-          coloredOverlay.height = imageElement.height;
-          
-          // Fill with color
-          overlayCtx.fillStyle = coloredMask.color || '#FF0000';
-          overlayCtx.fillRect(0, 0, imageElement.width, imageElement.height);
-          
-          // Apply mask to color overlay
-          const overlayData = overlayCtx.getImageData(0, 0, imageElement.width, imageElement.height);
-          for (let i = 0; i < maskData.data.length; i += 4) {
-            const maskValue = maskData.data[i]; // Use red channel as mask
-            const alpha = maskValue / 255 * (coloredMask.opacity || 0.7);
-            overlayData.data[i + 3] = Math.round(overlayData.data[i + 3] * alpha); // Set alpha
-          }
-          
-          overlayCtx.putImageData(overlayData, 0, 0);
-          
-          // Draw the colored overlay
-          ctx.globalCompositeOperation = 'source-over';
-          ctx.drawImage(coloredOverlay, 0, 0);
-          
-          ctx.restore();
-        };
-        maskImg.src = `data:image/png;base64,${mask.mask}`;
+        drawMask(mask, coloredMask.color || '#FF0000', coloredMask.opacity || 0.7);
       }
     });
 
-    // Draw masks based on state
+    // Draw masks based on state - higher priority than colored masks
     masks.forEach((mask, index) => {
       const isSelected = selectedMasks.has(mask.id);
       const isHovered = hoveredMaskId === mask.id;
       
+      // Skip if this mask is already drawn as a colored mask
+      const isColoredMask = coloredMasks.some(cm => cm.mask_id === mask.id);
+      
       // Draw masks if they are selected, hovered, or if we're showing all masks
-      if (isSelected || isHovered || showAllMasks) {
-        const maskImg = new Image();
-        maskImg.onload = () => {
-          ctx.save();
-          ctx.translate(offsetX, offsetY);
-          ctx.scale(scale, scale);
-          
-          // Create a temporary canvas for mask compositing
-          const tempCanvas = document.createElement('canvas');
-          const tempCtx = tempCanvas.getContext('2d');
-          if (!tempCtx) return;
-          
-          tempCanvas.width = imageElement.width;
-          tempCanvas.height = imageElement.height;
-          
-          // Draw the mask to temp canvas
-          tempCtx.drawImage(maskImg, 0, 0);
-          
-          // Get mask data
-          const maskData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
-          
-          // Determine color and opacity based on state
-          let fillColor = '#4ecdc4';
-          let opacity = 0.5;
-          
-          if (isSelected) {
-            fillColor = '#ff6b6b';
-            opacity = 0.6;
-          } else if (isHovered) {
-            fillColor = '#4ecdc4';
-            opacity = 0.5;
-          } else if (showAllMasks) {
-            fillColor = getUniqueColor(index);
-            opacity = 0.4;
-          }
-          
-          // Create colored overlay only where mask is white
-          const coloredOverlay = document.createElement('canvas');
-          const overlayCtx = coloredOverlay.getContext('2d');
-          if (!overlayCtx) return;
-          
-          coloredOverlay.width = imageElement.width;
-          coloredOverlay.height = imageElement.height;
-          
-          // Fill with color
-          overlayCtx.fillStyle = fillColor;
-          overlayCtx.fillRect(0, 0, imageElement.width, imageElement.height);
-          
-          // Apply mask to color overlay
-          const overlayData = overlayCtx.getImageData(0, 0, imageElement.width, imageElement.height);
-          for (let i = 0; i < maskData.data.length; i += 4) {
-            const maskValue = maskData.data[i]; // Use red channel as mask
-            const alpha = maskValue / 255 * opacity;
-            overlayData.data[i + 3] = Math.round(overlayData.data[i + 3] * alpha); // Set alpha
-          }
-          
-          overlayCtx.putImageData(overlayData, 0, 0);
-          
-          // Draw the colored overlay
-          ctx.globalCompositeOperation = 'source-over';
-          ctx.drawImage(coloredOverlay, 0, 0);
-          
-          ctx.restore();
-        };
-        maskImg.src = `data:image/png;base64,${mask.mask}`;
+      if ((isSelected || isHovered || showAllMasks) && !isColoredMask) {
+        let fillColor = '#4ecdc4';
+        let opacity = 0.5;
+        
+        if (isSelected) {
+          fillColor = '#ff6b6b';
+          opacity = 0.6;
+        } else if (isHovered) {
+          fillColor = '#4ecdc4';
+          opacity = 0.6;
+        } else if (showAllMasks) {
+          fillColor = getUniqueColor(index);
+          opacity = 0.4;
+        }
+        
+        drawMask(mask, fillColor, opacity);
       }
     });
-  }, [imageElement, masks, selectedMasks, coloredMasks, hoveredMaskId, canvasSize, showAllMasks]);
+  }, [imageElement, masks, selectedMasks, coloredMasks, hoveredMaskId, canvasSize, showAllMasks, loadedMaskImages]);
 
   // Redraw when dependencies change
   useEffect(() => {
     drawCanvas();
   }, [drawCanvas]);
-
-  // Additional redraw when colored masks change
-  useEffect(() => {
-    if (coloredMasks.length > 0) {
-      drawCanvas();
-    }
-  }, [coloredMasks.length, drawCanvas]);
-
-  // Pre-load mask images for better hover detection
-  useEffect(() => {
-    if (masks.length > 0 && imageElement) {
-      const newLoadedImages = new Map<number, HTMLImageElement>();
-      
-      masks.forEach((mask) => {
-        const img = new Image();
-        img.onload = () => {
-          newLoadedImages.set(mask.id, img);
-          setLoadedMaskImages(new Map(newLoadedImages));
-        };
-        img.src = `data:image/png;base64,${mask.mask}`;
-      });
-    }
-  }, [masks, imageElement]);
 
   // Utility: Generate unique colors for masks
   const getUniqueColor = (index: number): string => {
@@ -287,42 +281,9 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
     return colors[index % colors.length];
   };
 
-  // Utility: Check if a point is inside a mask (pixel hit-test)
-  function isPointInMask(maskId: number, x: number, y: number, imageWidth: number, imageHeight: number): boolean {
-    try {
-      // Check bounds first
-      if (x < 0 || x >= imageWidth || y < 0 || y >= imageHeight) {
-        return false;
-      }
-      
-      // Get the pre-loaded mask image
-      const maskImage = loadedMaskImages.get(maskId);
-      if (!maskImage) {
-        return false;
-      }
-      
-      // Create a temporary canvas
-      const tempCanvas = document.createElement('canvas');
-      tempCanvas.width = imageWidth;
-      tempCanvas.height = imageHeight;
-      const ctx = tempCanvas.getContext('2d');
-      if (!ctx) return false;
-      
-      // Draw the mask and check pixel
-      ctx.drawImage(maskImage, 0, 0);
-      const pixel = ctx.getImageData(x, y, 1, 1).data;
-      
-      // Check if the pixel has any alpha value (indicating mask presence)
-      return pixel[3] > 0;
-    } catch (error) {
-      // If there's any error, return false
-      return false;
-    }
-  }
-
-  // Handle mouse move for hover detection (no backend call)
+  // Handle mouse move for hover detection
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!imageElement || masks.length === 0) {
+    if (!imageElement || masks.length === 0 || loadedMaskImages.size === 0) {
       setHoveredMaskId(null);
       return;
     }
@@ -344,21 +305,25 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
       // Find the topmost mask under the cursor
       let foundMaskId: number | null = null;
       
-      // Check masks in reverse order (top to bottom)
+      // Check masks in reverse order (top to bottom) to get the most recently drawn/topmost mask
       for (let i = masks.length - 1; i >= 0; i--) {
         const mask = masks[i];
-        if (isPointInMask(mask.id, imageCoords.x, imageCoords.y, imageElement.width, imageElement.height)) {
+        if (isPointInMask(mask.id, imageCoords.x, imageCoords.y)) {
           foundMaskId = mask.id;
           break;
         }
-
       }
       
       setHoveredMaskId(foundMaskId);
     } else {
       setHoveredMaskId(null);
     }
-  }, [imageElement, masks, canvasToImageCoords, setHoveredMaskId]);
+  }, [imageElement, masks, canvasToImageCoords, setHoveredMaskId, isPointInMask, loadedMaskImages.size]);
+
+  // Handle mouse leave to clear hover
+  const handleMouseLeave = useCallback(() => {
+    setHoveredMaskId(null);
+  }, [setHoveredMaskId]);
 
   // Handle canvas click
   const handleCanvasClick = useCallback(
@@ -454,6 +419,7 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
         onClick={handleCanvasClick}
         onContextMenu={handleContextMenu}
         onMouseMove={handleMouseMove}
+        onMouseLeave={handleMouseLeave}
       />
       
       {/* Click Mode Indicator */}
@@ -486,14 +452,18 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
           <div className="space-y-2 text-xs text-gray-600">
             <div className="flex items-center space-x-2">
               <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-              <span>Click to select areas</span>
+              <span>Hover to preview masks</span>
             </div>
             <div className="flex items-center space-x-2">
               <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-              <span>Shift+click to add to selection</span>
+              <span>Click to select areas</span>
             </div>
             <div className="flex items-center space-x-2">
               <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
+              <span>Shift+click to add to selection</span>
+            </div>
+            <div className="flex items-center space-x-2">
+              <div className="w-2 h-2 bg-red-500 rounded-full"></div>
               <span>Shift+right-click to remove</span>
             </div>
           </div>
@@ -515,10 +485,16 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
             <div className="w-3 h-3 bg-purple-500 rounded-full"></div>
             <span className="text-sm font-medium text-gray-700">Colored: {coloredMasks.length}</span>
           </div>
+          {hoveredMaskId && (
+            <div className="flex items-center space-x-3">
+              <div className="w-3 h-3 bg-cyan-500 rounded-full animate-pulse"></div>
+              <span className="text-sm font-medium text-gray-700">Hovering: #{hoveredMaskId}</span>
+            </div>
+          )}
         </div>
       </div>
     </div>
   );
 };
 
-export default InteractiveCanvas; 
+export default InteractiveCanvas;

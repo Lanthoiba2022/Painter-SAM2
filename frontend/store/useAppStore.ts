@@ -191,9 +191,15 @@ export const useAppStore = create<AppStore>()(
       setDownloading: (isDownloading: boolean) =>
         set({ isDownloading }, false, 'setDownloading'),
 
-      // Hover state management
+      // Hover state management - optimized to reduce unnecessary re-renders
       setHoveredMaskId: (maskId: number | null) =>
-        set({ hoveredMaskId: maskId }, false, 'setHoveredMaskId'),
+        set((state) => {
+          // Only update if the value has actually changed
+          if (state.hoveredMaskId === maskId) {
+            return state;
+          }
+          return { hoveredMaskId: maskId };
+        }, false, 'setHoveredMaskId'),
 
       setClickToGenerateMode: (isActive: boolean) =>
         set({ isClickToGenerateMode: isActive }, false, 'setClickToGenerateMode'),
@@ -332,4 +338,4 @@ export const useSelectedMasksCount = () =>
 export const useMasksCount = () => useAppStore((state) => state.masks.length);
 export const useColoredMasksCount = () => useAppStore((state) => state.coloredMasks.length);
 
-export default useAppStore; 
+export default useAppStore;

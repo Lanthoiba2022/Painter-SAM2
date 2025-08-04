@@ -41,26 +41,30 @@ const MaskGallery: React.FC<MaskGalleryProps> = ({
         </div>
         <div className="flex items-center space-x-2 text-sm text-gray-500">
           <Info className="w-4 h-4" />
-          <span>Click to select • Shift+click to combine</span>
+          <span>Click to select • Hover for preview</span>
         </div>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
         {masks.map((mask, index) => {
           const isSelected = selectedMasks.has(mask.id);
-          const isHoveredFromImage = hoveredMaskId === mask.id;
+          const isHoveredFromCanvas = hoveredMaskId === mask.id;
           
           return (
             <motion.div
               key={mask.id}
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
+              animate={{
+                scale: isHoveredFromCanvas ? 1.08 : 1,
+                transition: { duration: 0.2 }
+              }}
               className={`
                 relative group cursor-pointer rounded-xl border-2 transition-all duration-200 overflow-hidden
                 ${isSelected 
                   ? 'border-blue-500 bg-blue-50/50 shadow-lg ring-2 ring-blue-200' 
-                  : isHoveredFromImage
-                  ? 'border-cyan-500 bg-cyan-50/50 shadow-lg ring-2 ring-cyan-200'
+                  : isHoveredFromCanvas
+                  ? 'border-cyan-500 bg-cyan-50/80 shadow-xl ring-4 ring-cyan-200/60'
                   : 'border-gray-200 hover:border-gray-300 bg-gray-50/50 hover:shadow-md'
                 }
               `}
@@ -68,27 +72,50 @@ const MaskGallery: React.FC<MaskGalleryProps> = ({
               onMouseEnter={() => onMaskHover?.(mask.id)}
               onMouseLeave={() => onMaskHover?.(null)}
             >
+              {/* Hover indicator from canvas */}
+              {isHoveredFromCanvas && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.8 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="absolute inset-0 bg-cyan-400/20 rounded-xl pointer-events-none z-10"
+                >
+                  <div className="absolute top-2 left-2 bg-cyan-500 text-white text-xs px-2 py-1 rounded-full font-semibold">
+                    Hovering
+                  </div>
+                </motion.div>
+              )}
+
               {/* Mask thumbnail */}
               <div className="relative w-full h-40 bg-gray-100 overflow-hidden">
                 <img
                   src={`data:image/png;base64,${mask.mask}`}
                   alt={`Mask ${index + 1}`}
-                  className="w-full h-full object-cover opacity-80"
+                  className={`w-full h-full object-cover transition-all duration-200 ${
+                    isHoveredFromCanvas ? 'opacity-90 scale-110' : 'opacity-80'
+                  }`}
                 />
                 
                 {/* Selection indicator */}
                 {isSelected && (
-                  <div className="absolute top-2 right-2">
+                  <motion.div 
+                    initial={{ scale: 0 }}
+                    animate={{ scale: 1 }}
+                    className="absolute top-2 right-2"
+                  >
                     <CheckCircle className="w-6 h-6 text-blue-600 bg-white rounded-full shadow-lg" />
-                  </div>
+                  </motion.div>
                 )}
                 
                 {/* Mask info overlay */}
-                <div className="absolute bottom-0 left-0 right-0 bg-black/80 text-white text-xs p-2">
+                <div className={`absolute bottom-0 left-0 right-0 text-white text-xs p-2 transition-all duration-200 ${
+                  isHoveredFromCanvas ? 'bg-cyan-600/90' : 'bg-black/80'
+                }`}>
                   <div className="flex items-center justify-between">
                     <span className="font-medium">#{mask.id}</span>
                     {mask.score && (
-                      <span className="text-green-400 font-semibold">
+                      <span className={`font-semibold ${
+                        isHoveredFromCanvas ? 'text-cyan-100' : 'text-green-400'
+                      }`}>
                         {Math.round(mask.score * 100)}%
                       </span>
                     )}
@@ -97,9 +124,15 @@ const MaskGallery: React.FC<MaskGalleryProps> = ({
               </div>
 
               {/* Mask details */}
-              <div className="p-3">
+              <div className={`p-3 transition-all duration-200 ${
+                isHoveredFromCanvas ? 'bg-cyan-50/50' : ''
+              }`}>
                 <div className="flex items-center justify-between text-xs text-gray-600 mb-2">
-                  <span className="font-medium">Mask {index + 1}</span>
+                  <span className={`font-medium ${
+                    isHoveredFromCanvas ? 'text-cyan-700' : ''
+                  }`}>
+                    Mask {index + 1}
+                  </span>
                   {mask.area && (
                     <span className="text-gray-500 font-mono">
                       {Math.round(mask.area)}px²
@@ -112,13 +145,42 @@ const MaskGallery: React.FC<MaskGalleryProps> = ({
                   {isSelected ? (
                     <Eye className="w-4 h-4 text-blue-600" />
                   ) : (
-                    <EyeOff className="w-4 h-4 text-gray-400" />
+                    <EyeOff className={`w-4 h-4 ${
+                      isHoveredFromCanvas ? 'text-cyan-500' : 'text-gray-400'
+                    }`} />
                   )}
-                  <span className="ml-2 text-xs text-gray-500 font-medium">
-                    {isSelected ? 'Selected' : 'Click to select'}
+                  <span className={`ml-2 text-xs font-medium ${
+                    isSelected 
+                      ? 'text-blue-600'
+                      : isHoveredFromCanvas
+                      ? 'text-cyan-600'
+                      : 'text-gray-500'
+                  }`}>
+                    {isSelected 
+                      ? 'Selected' 
+                      : isHoveredFromCanvas 
+                      ? 'Previewing' 
+                      : 'Click to select'
+                    }
                   </span>
                 </div>
               </div>
+
+              {/* Pulse animation for hovered state */}
+              {isHoveredFromCanvas && (
+                <motion.div
+                  className="absolute inset-0 border-2 border-cyan-400 rounded-xl pointer-events-none"
+                  animate={{
+                    opacity: [0.5, 1, 0.5],
+                    scale: [1, 1.02, 1],
+                  }}
+                  transition={{
+                    duration: 1.5,
+                    repeat: Infinity,
+                    ease: "easeInOut"
+                  }}
+                />
+              )}
             </motion.div>
           );
         })}
@@ -133,7 +195,11 @@ const MaskGallery: React.FC<MaskGalleryProps> = ({
             <ul className="text-xs space-y-2">
               <li className="flex items-start space-x-2">
                 <span className="w-1.5 h-1.5 bg-blue-500 rounded-full mt-1.5 flex-shrink-0"></span>
-                <span>Click on a mask thumbnail to select/deselect it</span>
+                <span>Hover over the preview image to see which mask covers that area</span>
+              </li>
+              <li className="flex items-start space-x-2">
+                <span className="w-1.5 h-1.5 bg-blue-500 rounded-full mt-1.5 flex-shrink-0"></span>
+                <span>Click on a mask thumbnail or preview area to select/deselect it</span>
               </li>
               <li className="flex items-start space-x-2">
                 <span className="w-1.5 h-1.5 bg-blue-500 rounded-full mt-1.5 flex-shrink-0"></span>
@@ -155,4 +221,4 @@ const MaskGallery: React.FC<MaskGalleryProps> = ({
   );
 };
 
-export default MaskGallery; 
+export default MaskGallery;
