@@ -962,10 +962,10 @@ def create_fastapi_app():
     fastapi_app.add_middleware(
         CORSMiddleware,
         allow_origins=[
-            "http://localhost:3000",  # Local development
-            "http://localhost:3001",  # Alternative local port
-            "https://localhost:3000",  # HTTPS local
-            "https://localhost:3001",  # HTTPS alternative local
+            "https://painter-sam2.onrender.com",  # Local development
+            "https://painter-sam2.onrender.com",  # Alternative local port
+            "https://painter-sam2.onrender.com",  # HTTPS local
+            "https://painter-sam2.onrender.com",  # HTTPS alternative local
             "*"  # Allow all origins for development
         ],
         allow_credentials=True,

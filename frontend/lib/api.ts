@@ -15,7 +15,7 @@ import {
 } from '@/types';
 
 // API Configuration
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://painter-sam2.onrender.com';
 
 // Create axios instance with default configuration
 const apiClient = axios.create({
