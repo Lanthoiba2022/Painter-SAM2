@@ -8,4 +8,4 @@ opencv-python-headless==4.8.1.78
 pydantic>=2.5.0
 python-dotenv==1.0.0
 modal>=0.64.0
-numpy>=1.26.0
+numpy<2.0.0
