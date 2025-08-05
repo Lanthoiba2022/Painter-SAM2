@@ -314,7 +314,7 @@ def get_file_size(file_path: str) -> int:
 class SAM2Service:
     def __init__(self):
         # Modal endpoints - using the deployed Modal app
-        self.modal_base_url = os.environ.get("MODAL_BASE_URL", "https://samtstbs--sam2-building-painter-fastapi-app-modal.modal.run")
+        self.modal_base_url = os.environ.get("MODAL_BASE_URL", "https://samtest841--sam2-building-painter-fastapi-app-modal.modal.run")
         self.modal_health_url = f"{self.modal_base_url}/health"
         logger.info(f"Initialized SAM2Service with Modal endpoint: {self.modal_base_url}")
         
