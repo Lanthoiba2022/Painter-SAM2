@@ -11,12 +11,25 @@ const Toaster = dynamic(() => import('react-hot-toast').then(mod => ({ default: 
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
+  icons: {
+    icon: '/color-palette.png',
+    shortcut: '/color-palette.png',
+    apple: '/color-palette.png',
+  },
   title: 'SAM2 Building Painter - AI-Powered Building Segmentation & Coloring',
   description: 'Upload images of Indian houses and buildings, generate segmentation masks using SAM2, and interactively paint walls with beautiful colors. Powered by Meta AI\'s Segment Anything Model 2.',
   keywords: 'SAM2, building segmentation, AI, image processing, building painting, Indian houses, Meta AI',
   authors: [{ name: 'SAM2 Building Painter Team' }],
   robots: 'index, follow',
   openGraph: {
+    images: [
+      {
+        url: '/color-palette.png',
+        width: 512,
+        height: 512,
+        alt: 'SAM2 Building Painter - Color Palette',
+      },
+    ],
     title: 'SAM2 Building Painter',
     description: 'AI-Powered Building Segmentation & Coloring Tool',
     type: 'website',

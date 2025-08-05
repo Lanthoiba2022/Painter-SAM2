@@ -12,6 +12,7 @@ import { useAppStore } from '@/store/useAppStore';
 import { api, handleApiError } from '@/lib/api';
 import { MaskInfo, ColoredMask } from '@/types';
 import ClientOnly from '@/components/ClientOnly';
+import { Info } from 'lucide-react';
 
 // Dynamically import InteractiveCanvas to prevent hydration issues
 const InteractiveCanvas = dynamic(() => import('@/components/InteractiveCanvas'), {
@@ -90,6 +91,7 @@ export default function HomePage() {
   } = useAppStore();
 
   const [isUploading, setIsUploading] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
 
   // Clear cache on page refresh
   useEffect(() => {
@@ -586,15 +588,47 @@ export default function HomePage() {
                 />
               </div>
               <h1 className="text-xl font-bold text-gray-900">
-              SAM2 Building Painter
+                SAM2 Building Painter
               </h1>
             </div>
-            <div className="text-sm text-gray-500 font-medium">
-              {/* Removed cached indicator from header to reduce redundancy */}
+            <div className="flex items-center space-x-4">
+              <button
+                className="p-2 rounded-full bg-blue-100 hover:bg-blue-200 transition-colors text-blue-600 shadow-sm"
+                title="Help"
+                onClick={() => setShowHelp(true)}
+              >
+                <Info className="w-5 h-5" />
+              </button>
             </div>
           </div>
         </div>
       </header>
+      {/* Help Modal */}
+      {showHelp && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+          <div className="bg-white rounded-2xl shadow-2xl border border-blue-200/50 max-w-md w-full p-8 relative animate-fadeIn">
+            <button
+              className="absolute top-3 right-3 text-gray-400 hover:text-gray-600"
+              onClick={() => setShowHelp(false)}
+              title="Close"
+            >
+              <span className="text-lg">×</span>
+            </button>
+            <div className="flex items-start space-x-3 mb-2">
+              <div className="w-5 h-5 bg-blue-500 rounded-full mt-0.5 flex-shrink-0"></div>
+              <p className="font-semibold text-blue-800">How to use masks:</p>
+            </div>
+            <ul className="text-xs text-blue-800 space-y-2 pl-8 list-disc">
+              <li>Hover over the preview image to see which mask covers that area</li>
+              <li>Click on a mask thumbnail or preview area to select/deselect it</li>
+              <li>left click on the main image to add to selection</li>
+              <li>right click to remove from selection</li>
+              <li>Selected masks will be colored when you paint</li>
+              <li>Painted Result Image can be preview at the bottom of the page too</li>
+            </ul>
+          </div>
+        </div>
+      )}
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 lg:px-6 py-6">
@@ -712,8 +746,8 @@ export default function HomePage() {
                     <div className="flex items-center space-x-3">
                       <div className="w-8 h-8 rounded-lg flex items-center justify-center overflow-hidden">
                         <img 
-                          src="/color-palette.png" 
-                          alt="Color Palette" 
+                          src="/imgPrev.png" 
+                          alt="Image Prev icon" 
                           className="w-full h-full object-cover"
                         />
                       </div>

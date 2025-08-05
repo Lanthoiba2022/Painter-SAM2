@@ -226,7 +226,7 @@ const MaskGallery: React.FC<MaskGalleryProps> = ({
       </div>
 
       {/* Instructions */}
-      <div className="mt-8 p-6 bg-blue-50/80 border border-blue-200/50 rounded-xl">
+      {/* <div className="mt-8 p-6 bg-blue-50/80 border border-blue-200/50 rounded-xl">
         <div className="flex items-start space-x-3">
           <div className="w-5 h-5 bg-blue-500 rounded-full mt-0.5 flex-shrink-0"></div>
           <div className="text-sm text-blue-800">
@@ -242,11 +242,11 @@ const MaskGallery: React.FC<MaskGalleryProps> = ({
               </li>
               <li className="flex items-start space-x-2">
                 <span className="w-1.5 h-1.5 bg-blue-500 rounded-full mt-1.5 flex-shrink-0"></span>
-                <span>Shift+click on the main image to add to selection</span>
+                <span>left click on the main image to add to selection</span>
               </li>
               <li className="flex items-start space-x-2">
                 <span className="w-1.5 h-1.5 bg-blue-500 rounded-full mt-1.5 flex-shrink-0"></span>
-                <span>Shift+right-click to remove from selection</span>
+                <span>right click to remove from selection</span>
               </li>
               <li className="flex items-start space-x-2">
                 <span className="w-1.5 h-1.5 bg-blue-500 rounded-full mt-1.5 flex-shrink-0"></span>
@@ -255,7 +255,7 @@ const MaskGallery: React.FC<MaskGalleryProps> = ({
             </ul>
           </div>
         </div>
-      </div>
+      </div> */}
     </motion.div>
   );
 };

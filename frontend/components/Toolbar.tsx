@@ -49,12 +49,12 @@ const Toolbar: React.FC<ToolbarProps> = ({
           <h3 className="text-base font-bold text-gray-900">Tools</h3>
         </div>
         <div className="flex items-center space-x-1">
-          <button
+          {/* <button
             className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100/50 rounded-lg transition-all duration-200"
             title="Settings"
           >
             <Settings className="w-3 h-3" />
-          </button>
+          </button> */}
           <button
             className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100/50 rounded-lg transition-all duration-200"
             title="Help"
@@ -83,7 +83,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
             <ul className="space-y-1">
               <li className="flex items-start space-x-2">
                 <span className="w-1 h-1 bg-blue-500 rounded-full mt-1.5 flex-shrink-0"></span>
-                <span>Select masks from the gallery below</span>
+                <span>Select masks in Image</span>
               </li>
               <li className="flex items-start space-x-2">
                 <span className="w-1 h-1 bg-blue-500 rounded-full mt-1.5 flex-shrink-0"></span>

@@ -613,11 +613,11 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
             </div>
             <div className="flex items-center space-x-2">
               <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
-              <span>Shift+click to add to selection</span>
+              <span>left click to add to selection</span>
             </div>
             <div className="flex items-center space-x-2">
               <div className="w-2 h-2 bg-red-500 rounded-full"></div>
-              <span>Shift+right-click to remove</span>
+              <span>right click to remove</span>
             </div>
           </div>
         </div>

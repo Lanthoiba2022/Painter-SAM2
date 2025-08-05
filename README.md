@@ -1,6 +1,6 @@
 # SAM2 Building Painter 🏠🎨
 
-A modern, AI-powered web application for segmenting and coloring Indian houses and buildings using Meta AI's Segment Anything Model 2 (SAM2).
+A modern web application for segmenting and coloring buildings using Meta AI's Segment Anything Model 2 (SAM2). This application provides interactive building segmentation with real-time painting capabilities.
 
 ![SAM2 Building Painter](https://img.shields.io/badge/SAM2-Building%20Painter-blue)
 ![Next.js](https://img.shields.io/badge/Next.js-14-black)
@@ -17,6 +17,8 @@ A modern, AI-powered web application for segmenting and coloring Indian houses a
 - **⚡ Real-time Preview**: See your painted results instantly
 - **💾 Download Results**: Save your colored building visualizations
 - **🚀 Cloud Deployment**: GPU-powered processing via Modal
+- **🔄 Advanced Caching**: Intelligent caching for faster mask generation and instant point selection
+- **🎯 Instant Mask Selection**: Hover over areas to see mask previews instantly
 
 ## 🏗️ Architecture
 
@@ -26,9 +28,10 @@ A modern, AI-powered web application for segmenting and coloring Indian houses a
 │   (Next.js)     │◄──►│   (FastAPI)     │◄──►│   (SAM2 Model)  │
 │                 │    │                 │    │                 │
 │ • Upload UI     │    │ • Session Mgmt  │    │ • Segmentation  │
-│ • Canvas        │    │ • File Handling │    │ • Mask Gen      │
-│ • Color Palette │    │ • API Gateway   │    │ • Painting      │
-│ • Download      │    │ • Error Handling│    │ • GPU Processing│
+│ • Canvas        │    │ • File Handling │    │ • Masks Gen     │
+│ • Color Palette │    │ • API Gateway   │    │ • Single Pt Gen │
+│ • Painting      │    │ • Error Handling│    │ • GPU Processing│
+│ • Download      │    │ • Caching Layer │    │ • A100 GPU      │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
 ```
 
@@ -37,7 +40,7 @@ A modern, AI-powered web application for segmenting and coloring Indian houses a
 ### Prerequisites
 
 - **Node.js 18+** and **npm**
-- **Python 3.10+** and **pip**
+- **Python 3.10+** and **pip / conda**
 - **Modal account** (for GPU processing)
 
 ### 1. Clone and Setup
@@ -46,38 +49,69 @@ A modern, AI-powered web application for segmenting and coloring Indian houses a
 # Clone the repository
 git clone <repository-url>
 cd SAM2_IndieVerse
-
-# Run the setup script
-chmod +x setup.sh
-./setup.sh setup
 ```
 
-### 2. Configure Environment
+### 2. Backend Setup
 
-Update the configuration files:
+```bash
+# Navigate to backend directory
+cd backend
 
-**Backend** (`backend/.env`):
-```env
+# Create virtual environment
+python -m venv venv
+
+# Activate virtual environment
+# On Windows:
+venv\Scripts\activate
+# On macOS/Linux:
+source venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Set up environment variables
+# Create .env file with:
 MODAL_BASE_URL=https://your-username--sam2-building-painter-fastapi-app-modal.modal.run
 ```
 
-**Frontend** (`frontend/.env.local`):
-```env
+### 3. Frontend Setup
+
+```bash
+# Navigate to frontend directory
+cd ../frontend
+
+# Install dependencies
+npm install
+
+# Set up environment variables
+# Create .env.local file with:
 NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
 
-### 3. Deploy Modal Backend
+### 4. Deploy Modal Backend
 
 ```bash
+# Navigate back to backend directory
+cd ../backend
+
+# Install Modal CLI
+pip install modal
+
+# Authenticate with Modal
+modal token new
+
 # Deploy SAM2 model to Modal
-./setup.sh modal
+modal deploy modal_sam2.py
 ```
 
-### 4. Start Development Servers
+### 5. Start Development Servers
 
 ```bash
-# Start both backend and frontend
-./setup.sh dev
+# Start backend (in backend directory)
+python main.py
+
+# Start frontend (in frontend directory, new terminal)
+npm run dev
 ```
 
 Visit [http://localhost:3000](http://localhost:3000) to use the application!
@@ -96,7 +130,9 @@ Visit [http://localhost:3000](http://localhost:3000) to use the application!
 
 ### 3. Select Areas
 - **Click anywhere** on the image to select the corresponding area
-- **Shift+click** to add or remove areas from your selection
+- **left click** to add areas to your selection
+- **right click** to remove areas from your selection
+- **Hover over areas** to see instant mask previews
 - **Toggle "Show All Masks"** to see all available segmentation areas
 - Selected areas will be highlighted
 
@@ -107,8 +143,7 @@ Visit [http://localhost:3000](http://localhost:3000) to use the application!
 
 ### 5. Paint Areas
 - Click "Paint Selected Areas" to apply the color to your selection
-- Adjust opacity if needed (default: 70%)
-- The painted result will appear below the canvas
+- The painted result can be seen on Image Preview as well as bottom of page
 
 ### 6. Download Results
 - Click "Download Result" to save your painted building image
@@ -121,10 +156,10 @@ Visit [http://localhost:3000](http://localhost:3000) to use the application!
 ```
 SAM2_IndieVerse/
 ├── backend/                 # FastAPI backend
-│   ├── main.py             # Main API server
-│   ├── modal_sam2.py       # Modal deployment
+│   ├── main.py             # Main API server with session management
+│   ├── modal_sam2.py       # Modal deployment for SAM2
 │   ├── requirements.txt    # Python dependencies
-│   └── DEPLOYMENT_GUIDE.md # Backend deployment guide
+│   └── README.md          # Backend documentation
 ├── frontend/               # Next.js frontend
 │   ├── app/               # Next.js App Router
 │   ├── components/        # React components
@@ -133,26 +168,24 @@ SAM2_IndieVerse/
 │   ├── types/            # TypeScript types
 │   └── package.json      # Node.js dependencies
 ├── SAM2/                  # Original SAM2 repository
-├── setup.sh              # Setup and deployment script
 └── README.md             # This file
 ```
 
 ### Available Scripts
 
 ```bash
-# Setup
-./setup.sh setup          # Complete setup
-./setup.sh backend        # Backend setup only
-./setup.sh frontend       # Frontend setup only
+# Backend
+cd backend
+python main.py                    # Start backend server
+modal deploy modal_sam2.py             # Deploy Modal backend
 
-# Deployment
-./setup.sh modal          # Deploy Modal backend
-./setup.sh dev            # Start development servers
-
-# Manual commands
-cd backend && python main.py                    # Start backend
-cd frontend && npm run dev                      # Start frontend
-cd frontend && npm run build                    # Build for production
+# Frontend
+cd frontend
+npm run dev                      # Start development server
+npm run build                    # Build for production
+npm run start                    # Start production server
+npm run lint                     # Run ESLint
+npm run type-check              # Run TypeScript type checking
 ```
 
 ### API Endpoints
@@ -165,6 +198,9 @@ The backend provides these key endpoints:
 - `POST /paint-multiple-masks` - Paint selected areas
 - `POST /download-painted-image` - Download result
 - `GET /health` - Health check
+- `POST /get-embedding` - Get image embedding for caching
+- `POST /generate-masks-cached` - Generate masks with caching
+- `POST /get-mask-at-point-instant` - Instant mask selection
 
 ## 🚀 Deployment
 
@@ -172,7 +208,8 @@ The backend provides these key endpoints:
 
 1. **Deploy Modal Backend**:
    ```bash
-   ./setup.sh modal
+   cd backend
+   modal deploy modal_sam2.py
    ```
 
 2. **Deploy Frontend to Vercel**:
@@ -188,7 +225,7 @@ The backend provides these key endpoints:
 
 - **Frontend**: Vercel, Netlify, Railway, AWS Amplify
 - **Backend**: Railway, Render, Heroku, DigitalOcean
-- **GPU Processing**: Modal (recommended), AWS SageMaker, Google Colab
+- **GPU Processing**: Modal (recommended), AWS SageMaker, Google Colab, RunPod, Beam Cloud, Vast ai
 
 ## 🔧 Configuration
 
@@ -197,7 +234,6 @@ The backend provides these key endpoints:
 ```env
 # Modal Configuration
 MODAL_BASE_URL=https://your-modal-deployment.modal.run
-MODAL_HEALTH_URL=https://your-modal-deployment.modal.run/health
 
 # Server Configuration
 HOST=0.0.0.0
@@ -323,39 +359,22 @@ NEXT_PUBLIC_ENABLE_DEBUG_MODE=true
 - Add tests for new features
 - Update documentation
 
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## 🙏 Acknowledgments
 
 - **Meta AI** for the amazing SAM2 model
 - **Modal** for GPU cloud infrastructure
 - **Next.js** team for the excellent framework
-- **React Konva** for canvas functionality
+- **FastAPI** for backend functionality
 - **All open-source contributors**
 
-## 📞 Support
+## Support
 
 For support and questions:
 
 - 📧 Create an issue in the repository
-- 📖 Check the [deployment guide](backend/DEPLOYMENT_GUIDE.md)
+- 📖 Check the [backend documentation](backend/README.md)
 - 🔧 Review the [frontend documentation](frontend/README.md)
-- 💬 Join our community discussions
 
-## 🎯 Roadmap
-
-- [ ] User authentication and project saving
-- [ ] Batch processing for multiple images
-- [ ] Advanced color blending modes
-- [ ] Export to different formats (PDF, SVG)
-- [ ] Mobile app version
-- [ ] Integration with design tools
-- [ ] Community gallery of painted buildings
 
 ---
-
-**Made with ❤️ for the Indian architecture community** 
-# Paint-SAM2
-# Painter-SAM2
