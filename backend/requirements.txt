@@ -5,7 +5,7 @@ aiofiles==24.1.0
 httpx==0.25.0
 pillow>=10.2.0
 opencv-python-headless==4.8.1.78
-pydantic==2.4.2
+pydantic>=2.5.0
 python-dotenv==1.0.0
-modal==0.56.4874
+modal>=0.64.0
 numpy>=1.26.0
