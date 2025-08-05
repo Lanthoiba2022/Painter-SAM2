@@ -1,12 +1,41 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
+import { persist } from 'zustand/middleware';
 import { AppState, MaskInfo, ColoredMask } from '@/types';
 import { api } from '@/lib/api';
+
+// Enhanced types for caching
+interface EmbeddingCache {
+  [imageHash: string]: {
+    embedding: string;
+    timestamp: number;
+    imageData: string;
+    width: number;
+    height: number;
+  };
+}
+
+interface MaskCache {
+  [imageHash: string]: {
+    masks: MaskInfo[];
+    timestamp: number;
+    pointsPerSide: number;
+    predIouThresh: number;
+    stabilityScoreThresh: number;
+  };
+}
 
 interface AppStore extends AppState {
   // Additional state for hover functionality
   hoveredMaskId: number | null;
   isClickToGenerateMode: boolean;
+  
+  // New caching state
+  embeddingCache: EmbeddingCache;
+  maskCache: MaskCache;
+  currentImageHash: string | null;
+  isEmbeddingCached: boolean;
+  isMaskCached: boolean;
   
   // Actions
   setSessionId: (sessionId: string) => void;
@@ -30,12 +59,35 @@ interface AppStore extends AppState {
   setDownloading: (isDownloading: boolean) => void;
   setHoveredMaskId: (maskId: number | null) => void;
   setClickToGenerateMode: (isActive: boolean) => void;
+  
+  // New caching actions
+  setEmbeddingCache: (imageHash: string, embedding: string, imageData: string, width: number, height: number) => void;
+  setMaskCache: (imageHash: string, masks: MaskInfo[], pointsPerSide: number, predIouThresh: number, stabilityScoreThresh: number) => void;
+  setCurrentImageHash: (hash: string | null) => void;
+  setIsEmbeddingCached: (cached: boolean) => void;
+  setIsMaskCached: (cached: boolean) => void;
+  getCachedEmbedding: (imageHash: string) => string | null;
+  getCachedMasks: (imageHash: string) => MaskInfo[] | null;
+  clearCache: () => void;
+  
   reset: () => void;
   resetImage: () => void;
   resetMasks: () => void;
   resetColoredMasks: () => void;
   generateMaskAtPoint: (sessionId: string, point: [number, number]) => Promise<MaskInfo | null>;
 }
+
+// Utility function to generate image hash
+const generateImageHash = (imageData: string): string => {
+  // Simple hash function for image data
+  let hash = 0;
+  for (let i = 0; i < imageData.length; i++) {
+    const char = imageData.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32-bit integer
+  }
+  return hash.toString(36);
+};
 
 const initialState: AppState = {
   sessionId: null,
@@ -60,234 +112,345 @@ const initialState: AppState = {
 
 export const useAppStore = create<AppStore>()(
   devtools(
-    (set, get) => ({
-      ...initialState,
-      hoveredMaskId: null,
-      isClickToGenerateMode: false,
+    persist(
+      (set, get) => ({
+        ...initialState,
+        hoveredMaskId: null,
+        isClickToGenerateMode: false,
+        
+        // New caching state
+        embeddingCache: {},
+        maskCache: {},
+        currentImageHash: null,
+        isEmbeddingCached: false,
+        isMaskCached: false,
 
-      // Session management
-      setSessionId: (sessionId: string) =>
-        set({ sessionId }, false, 'setSessionId'),
+        // Session management
+        setSessionId: (sessionId: string) =>
+          set({ sessionId }, false, 'setSessionId'),
 
-      // Image management
-      setImageData: (imageData: string, width: number, height: number, filename: string) =>
-        set(
-          {
-            imageData,
-            imageWidth: width,
-            imageHeight: height,
-            filename,
-            error: null,
-          },
-          false,
-          'setImageData'
-        ),
+        // Image management with caching
+        setImageData: (imageData: string, width: number, height: number, filename: string) => {
+          const imageHash = generateImageHash(imageData);
+          const embeddingCache = get().embeddingCache;
+          const maskCache = get().maskCache;
+          
+          // Check if we have cached data for this image
+          const isEmbeddingCached = imageHash in embeddingCache;
+          const isMaskCached = imageHash in maskCache;
+          
+          set(
+            {
+              imageData,
+              imageWidth: width,
+              imageHeight: height,
+              filename,
+              error: null,
+              currentImageHash: imageHash,
+              isEmbeddingCached,
+              isMaskCached,
+            },
+            false,
+            'setImageData'
+          );
+        },
 
-      // Loading states
-      setLoading: (isLoading: boolean) =>
-        set({ isLoading }, false, 'setLoading'),
+        // Loading states
+        setLoading: (isLoading: boolean) =>
+          set({ isLoading }, false, 'setLoading'),
 
-      setError: (error: string | null) =>
-        set({ error }, false, 'setError'),
+        setError: (error: string | null) =>
+          set({ error }, false, 'setError'),
 
-      // Mask management
-      setMasks: (masks: MaskInfo[]) =>
-        set({ masks }, false, 'setMasks'),
+        // Mask management
+        setMasks: (masks: MaskInfo[]) =>
+          set({ masks }, false, 'setMasks'),
 
-      addMask: (mask: MaskInfo) =>
-        set(
-          (state) => ({
-            masks: [...state.masks, mask],
-          }),
-          false,
-          'addMask'
-        ),
+        addMask: (mask: MaskInfo) =>
+          set(
+            (state) => ({
+              masks: [...state.masks, mask],
+            }),
+            false,
+            'addMask'
+          ),
 
-      selectMask: (maskId: number, isSelected: boolean) =>
-        set(
-          (state) => {
-            const newSelectedMasks = new Set(state.selectedMasks);
-            if (isSelected) {
-              newSelectedMasks.add(maskId);
-            } else {
-              newSelectedMasks.delete(maskId);
+        selectMask: (maskId: number, isSelected: boolean) =>
+          set(
+            (state) => {
+              const newSelectedMasks = new Set(state.selectedMasks);
+              if (isSelected) {
+                newSelectedMasks.add(maskId);
+              } else {
+                newSelectedMasks.delete(maskId);
+              }
+              return { selectedMasks: newSelectedMasks };
+            },
+            false,
+            'selectMask'
+          ),
+
+        clearSelectedMasks: () =>
+          set({ selectedMasks: new Set() }, false, 'clearSelectedMasks'),
+
+        // Colored mask management
+        addColoredMask: (coloredMask: ColoredMask) =>
+          set(
+            (state) => {
+              // Check if mask already exists and update it, otherwise add new
+              const existingIndex = state.coloredMasks.findIndex(
+                cm => cm.mask_id === coloredMask.mask_id
+              );
+              
+              if (existingIndex >= 0) {
+                // Update existing colored mask
+                const updatedColoredMasks = [...state.coloredMasks];
+                updatedColoredMasks[existingIndex] = coloredMask;
+                return { coloredMasks: updatedColoredMasks };
+              } else {
+                // Add new colored mask
+                return { coloredMasks: [...state.coloredMasks, coloredMask] };
+              }
+            },
+            false,
+            'addColoredMask'
+          ),
+
+        removeColoredMask: (index: number) =>
+          set(
+            (state) => ({
+              coloredMasks: state.coloredMasks.filter((_, i) => i !== index),
+            }),
+            false,
+            'removeColoredMask'
+          ),
+
+        updateColoredMask: (index: number, coloredMask: Partial<ColoredMask>) =>
+          set(
+            (state) => ({
+              coloredMasks: state.coloredMasks.map((mask, i) =>
+                i === index ? { ...mask, ...coloredMask } : mask
+              ),
+            }),
+            false,
+            'updateColoredMask'
+          ),
+
+        // Color and opacity management
+        setCurrentColor: (color: string) =>
+          set({ currentColor: color }, false, 'setCurrentColor'),
+
+        setCurrentOpacity: (opacity: number) =>
+          set({ currentOpacity: opacity }, false, 'setCurrentOpacity'),
+
+        // UI state management
+        setShowAllMasks: (show: boolean) =>
+          set({ showAllMasks: show }, false, 'setShowAllMasks'),
+
+        setPaintedImage: (imageData: string | null) =>
+          set({ paintedImage: imageData }, false, 'setPaintedImage'),
+
+        // Operation states
+        setGeneratingMasks: (isGenerating: boolean) =>
+          set({ isGeneratingMasks: isGenerating }, false, 'setGeneratingMasks'),
+
+        setGeneratingAdvancedMasks: (isGenerating: boolean) =>
+          set({ isGeneratingAdvancedMasks: isGenerating }, false, 'setGeneratingAdvancedMasks'),
+
+        setPainting: (isPainting: boolean) =>
+          set({ isPainting }, false, 'setPainting'),
+
+        setDownloading: (isDownloading: boolean) =>
+          set({ isDownloading }, false, 'setDownloading'),
+
+        // Hover state management - optimized to reduce unnecessary re-renders
+        setHoveredMaskId: (maskId: number | null) =>
+          set((state) => {
+            // Only update if the value has actually changed
+            if (state.hoveredMaskId === maskId) {
+              return state;
             }
-            return { selectedMasks: newSelectedMasks };
-          },
-          false,
-          'selectMask'
-        ),
+            return { hoveredMaskId: maskId };
+          }, false, 'setHoveredMaskId'),
 
-      clearSelectedMasks: () =>
-        set({ selectedMasks: new Set() }, false, 'clearSelectedMasks'),
+        setClickToGenerateMode: (isActive: boolean) =>
+          set({ isClickToGenerateMode: isActive }, false, 'setClickToGenerateMode'),
 
-      // Colored mask management
-      addColoredMask: (coloredMask: ColoredMask) =>
-        set(
-          (state) => {
-            // Check if mask already exists and update it, otherwise add new
-            const existingIndex = state.coloredMasks.findIndex(
-              cm => cm.mask_id === coloredMask.mask_id
-            );
-            
-            if (existingIndex >= 0) {
-              // Update existing colored mask
-              const updatedColoredMasks = [...state.coloredMasks];
-              updatedColoredMasks[existingIndex] = coloredMask;
-              return { coloredMasks: updatedColoredMasks };
-            } else {
-              // Add new colored mask
-              return { coloredMasks: [...state.coloredMasks, coloredMask] };
-            }
-          },
-          false,
-          'addColoredMask'
-        ),
+        // New caching actions
+        setEmbeddingCache: (imageHash: string, embedding: string, imageData: string, width: number, height: number) =>
+          set(
+            (state) => ({
+              embeddingCache: {
+                ...state.embeddingCache,
+                [imageHash]: {
+                  embedding,
+                  timestamp: Date.now(),
+                  imageData,
+                  width,
+                  height,
+                },
+              },
+            }),
+            false,
+            'setEmbeddingCache'
+          ),
 
-      removeColoredMask: (index: number) =>
-        set(
-          (state) => ({
-            coloredMasks: state.coloredMasks.filter((_, i) => i !== index),
-          }),
-          false,
-          'removeColoredMask'
-        ),
+        setMaskCache: (imageHash: string, masks: MaskInfo[], pointsPerSide: number, predIouThresh: number, stabilityScoreThresh: number) =>
+          set(
+            (state) => ({
+              maskCache: {
+                ...state.maskCache,
+                [imageHash]: {
+                  masks,
+                  timestamp: Date.now(),
+                  pointsPerSide,
+                  predIouThresh,
+                  stabilityScoreThresh,
+                },
+              },
+            }),
+            false,
+            'setMaskCache'
+          ),
 
-      updateColoredMask: (index: number, coloredMask: Partial<ColoredMask>) =>
-        set(
-          (state) => ({
-            coloredMasks: state.coloredMasks.map((mask, i) =>
-              i === index ? { ...mask, ...coloredMask } : mask
-            ),
-          }),
-          false,
-          'updateColoredMask'
-        ),
+        setCurrentImageHash: (hash: string | null) =>
+          set({ currentImageHash: hash }, false, 'setCurrentImageHash'),
 
-      // Color and opacity management
-      setCurrentColor: (color: string) =>
-        set({ currentColor: color }, false, 'setCurrentColor'),
+        setIsEmbeddingCached: (cached: boolean) =>
+          set({ isEmbeddingCached: cached }, false, 'setIsEmbeddingCached'),
 
-      setCurrentOpacity: (opacity: number) =>
-        set({ currentOpacity: opacity }, false, 'setCurrentOpacity'),
+        setIsMaskCached: (cached: boolean) =>
+          set({ isMaskCached: cached }, false, 'setIsMaskCached'),
 
-      // UI state management
-      setShowAllMasks: (show: boolean) =>
-        set({ showAllMasks: show }, false, 'setShowAllMasks'),
-
-      setPaintedImage: (imageData: string | null) =>
-        set({ paintedImage: imageData }, false, 'setPaintedImage'),
-
-      // Operation states
-      setGeneratingMasks: (isGenerating: boolean) =>
-        set({ isGeneratingMasks: isGenerating }, false, 'setGeneratingMasks'),
-
-      setGeneratingAdvancedMasks: (isGenerating: boolean) =>
-        set({ isGeneratingAdvancedMasks: isGenerating }, false, 'setGeneratingAdvancedMasks'),
-
-      setPainting: (isPainting: boolean) =>
-        set({ isPainting }, false, 'setPainting'),
-
-      setDownloading: (isDownloading: boolean) =>
-        set({ isDownloading }, false, 'setDownloading'),
-
-      // Hover state management - optimized to reduce unnecessary re-renders
-      setHoveredMaskId: (maskId: number | null) =>
-        set((state) => {
-          // Only update if the value has actually changed
-          if (state.hoveredMaskId === maskId) {
-            return state;
+        getCachedEmbedding: (imageHash: string) => {
+          const state = get();
+          const cached = state.embeddingCache[imageHash];
+          if (cached && Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) { // 24 hours
+            return cached.embedding;
           }
-          return { hoveredMaskId: maskId };
-        }, false, 'setHoveredMaskId'),
+          return null;
+        },
 
-      setClickToGenerateMode: (isActive: boolean) =>
-        set({ isClickToGenerateMode: isActive }, false, 'setClickToGenerateMode'),
+        getCachedMasks: (imageHash: string) => {
+          const state = get();
+          const cached = state.maskCache[imageHash];
+          if (cached && Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) { // 24 hours
+            return cached.masks;
+          }
+          return null;
+        },
+
+        clearCache: () =>
+          set({ embeddingCache: {}, maskCache: {} }, false, 'clearCache'),
 
         // Generate mask at specific point
-      generateMaskAtPoint: async (sessionId: string, point: [number, number]) => {
-        try {
-          const response = await api.generateMaskAtPoint(sessionId, point);
-          const newMask: MaskInfo = {
-            id: Date.now() + Math.random(), // Generate unique ID
-            mask: response.mask,
-            score: response.score,
-            // Calculate area from mask if needed
-            area: undefined,
-          };
-          
-          set((state) => {
-            // Add to masks array (don't clear existing masks)
-            const updatedMasks = [...state.masks, newMask];
-            
-            // Auto-select the new mask but DON'T automatically color it
-            const updatedSelectedMasks = new Set([newMask.id]);
-            
-            // Don't add to colored masks automatically - let user choose when to paint
-            // This allows the mask to be properly selected/unselected
-            
-            return {
-              masks: updatedMasks,
-              selectedMasks: updatedSelectedMasks,
-              // Don't modify coloredMasks here
+        generateMaskAtPoint: async (sessionId: string, point: [number, number]) => {
+          try {
+            const response = await api.generateMaskAtPoint(sessionId, point);
+            const newMask: MaskInfo = {
+              id: Date.now() + Math.random(), // Generate unique ID
+              mask: response.mask,
+              score: response.score,
+              // Calculate area from mask if needed
+              area: undefined,
             };
-          }, false, 'generateMaskAtPoint');
-          
-          return newMask;
-        } catch (error) {
-          console.error('Failed to generate mask at point:', error);
-          // Don't throw the error, just log it and return null
-          // This allows the UI to continue working even if mask generation fails
-          return null;
-        }
-      },
+            
+            set((state) => {
+              // Add to masks array (don't clear existing masks)
+              const updatedMasks = [...state.masks, newMask];
+              
+              // Auto-select the new mask but DON'T automatically color it
+              const updatedSelectedMasks = new Set([newMask.id]);
+              
+              // Don't add to colored masks automatically - let user choose when to paint
+              // This allows the mask to be properly selected/unselected
+              
+              return {
+                masks: updatedMasks,
+                selectedMasks: updatedSelectedMasks,
+                // Don't modify coloredMasks here
+              };
+            }, false, 'generateMaskAtPoint');
+            
+            return newMask;
+          } catch (error) {
+            console.error('Failed to generate mask at point:', error);
+            // Don't throw the error, just log it and return null
+            // This allows the UI to continue working even if mask generation fails
+            return null;
+          }
+        },
 
-      // Reset functions
-      reset: () => set({ ...initialState, hoveredMaskId: null, isClickToGenerateMode: false }, false, 'reset'),
+        // Reset functions
+        reset: () => set({ 
+          ...initialState, 
+          hoveredMaskId: null, 
+          isClickToGenerateMode: false,
+          embeddingCache: {},
+          maskCache: {},
+          currentImageHash: null,
+          isEmbeddingCached: false,
+          isMaskCached: false,
+        }, false, 'reset'),
 
-      resetImage: () =>
-        set(
-          {
-            imageData: null,
-            imageWidth: 0,
-            imageHeight: 0,
-            filename: null,
-            masks: [], // Clear masks when image is reset
-            selectedMasks: new Set(),
-            coloredMasks: [], // Clear colored masks when image is reset
-            paintedImage: null,
-            error: null,
-            hoveredMaskId: null,
-            isClickToGenerateMode: false,
-          },
-          false,
-          'resetImage'
-        ),
+        resetImage: () =>
+          set(
+            {
+              imageData: null,
+              imageWidth: 0,
+              imageHeight: 0,
+              filename: null,
+              masks: [], // Clear masks when image is reset
+              selectedMasks: new Set(),
+              coloredMasks: [], // Clear colored masks when image is reset
+              paintedImage: null,
+              error: null,
+              hoveredMaskId: null,
+              isClickToGenerateMode: false,
+              currentImageHash: null,
+              isEmbeddingCached: false,
+              isMaskCached: false,
+            },
+            false,
+            'resetImage'
+          ),
 
-      resetMasks: () =>
-        set(
-          {
-            masks: [],
-            selectedMasks: new Set(),
-            // Don't clear coloredMasks - they should persist until session ends
-            paintedImage: null,
-            hoveredMaskId: null,
-            isClickToGenerateMode: false,
-          },
-          false,
-          'resetMasks'
-        ),
+        resetMasks: () =>
+          set(
+            {
+              masks: [],
+              selectedMasks: new Set(),
+              // Don't clear coloredMasks - they should persist until session ends
+              paintedImage: null,
+              hoveredMaskId: null,
+              isClickToGenerateMode: false,
+            },
+            false,
+            'resetMasks'
+          ),
 
-      resetColoredMasks: () =>
-        set(
-          {
-            coloredMasks: [],
-            paintedImage: null,
-          },
-          false,
-          'resetColoredMasks'
-        ),
-    }),
+        resetColoredMasks: () =>
+          set(
+            {
+              coloredMasks: [],
+              paintedImage: null,
+            },
+            false,
+            'resetColoredMasks'
+          ),
+      }),
+      {
+        name: 'sam2-building-painter-store',
+        partialize: (state) => ({
+          // Persist only essential data to localStorage
+          embeddingCache: state.embeddingCache,
+          maskCache: state.maskCache,
+          coloredMasks: state.coloredMasks,
+          currentColor: state.currentColor,
+          currentOpacity: state.currentOpacity,
+        }),
+      }
+    ),
     {
       name: 'sam2-building-painter-store',
     }
@@ -318,6 +481,13 @@ export const usePainting = () => useAppStore((state) => state.isPainting);
 export const useDownloading = () => useAppStore((state) => state.isDownloading);
 export const useHoveredMaskId = () => useAppStore((state) => state.hoveredMaskId);
 export const useClickToGenerateMode = () => useAppStore((state) => state.isClickToGenerateMode);
+
+// New caching selectors
+export const useEmbeddingCache = () => useAppStore((state) => state.embeddingCache);
+export const useMaskCache = () => useAppStore((state) => state.maskCache);
+export const useCurrentImageHash = () => useAppStore((state) => state.currentImageHash);
+export const useIsEmbeddingCached = () => useAppStore((state) => state.isEmbeddingCached);
+export const useIsMaskCached = () => useAppStore((state) => state.isMaskCached);
 
 // Computed selectors
 export const useHasImage = () => useAppStore((state) => !!state.imageData);

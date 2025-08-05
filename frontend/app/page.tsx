@@ -32,6 +32,11 @@ export default function HomePage() {
     hoveredMaskId,
     isClickToGenerateMode,
     
+    // Caching state
+    currentImageHash,
+    isEmbeddingCached,
+    isMaskCached,
+    
     // Actions
     setSessionId,
     setImageData,
@@ -52,11 +57,18 @@ export default function HomePage() {
     setClickToGenerateMode,
     generateMaskAtPoint,
     reset,
+    
+    // Caching actions
+    setEmbeddingCache,
+    setMaskCache,
+    getCachedMasks,
+    setIsEmbeddingCached,
+    setIsMaskCached,
   } = useAppStore();
 
   const [isUploading, setIsUploading] = useState(false);
 
-  // Handle image upload
+  // Handle image upload with caching
   const handleImageUpload = useCallback(async (file: File) => {
     try {
       setIsUploading(true);
@@ -80,10 +92,25 @@ export default function HomePage() {
       
       toast.success('Image uploaded successfully!', { id: 'upload' });
       
-      // Auto-generate masks after upload
-      setTimeout(() => {
-        handleGenerateMasks();
-      }, 1000);
+      // Check for cached masks and embeddings
+      if (currentImageHash) {
+        const cachedMasks = getCachedMasks(currentImageHash);
+        if (cachedMasks && cachedMasks.length > 0) {
+          setMasks(cachedMasks);
+          setIsMaskCached(true);
+          toast.success(`Loaded ${cachedMasks.length} cached masks!`, { 
+            id: 'cached-masks',
+            duration: 3000 
+          });
+        }
+      }
+      
+      // Auto-generate masks after upload if no cached masks
+      if (!masks.length) {
+        setTimeout(() => {
+          handleGenerateMasks();
+        }, 1000);
+      }
       
     } catch (err) {
       const errorMessage = handleApiError(err);
@@ -92,11 +119,11 @@ export default function HomePage() {
     } finally {
       setIsUploading(false);
     }
-  }, [setSessionId, setImageData, setError]);
+  }, [setSessionId, setImageData, setError, currentImageHash, getCachedMasks, setMasks, setIsMaskCached, masks.length]);
 
-  // Generate masks
+  // Generate masks with caching
   const handleGenerateMasks = useCallback(async () => {
-    if (!sessionId) return;
+    if (!sessionId || !currentImageHash) return;
     
     try {
       setGeneratingMasks(true);
@@ -104,13 +131,20 @@ export default function HomePage() {
       
       toast.loading('Generating masks with improved coverage...', { id: 'generate-masks' });
       
-      // Use improved parameters for better mask generation
-      const response = await api.generateMasks(sessionId, 96, 0.7, 0.8);
+      // Use cached endpoint for better performance
+      const response = await api.generateMasksWithCache(sessionId, currentImageHash, 96, 0.7, 0.8);
       
       setMasks(response.masks);
       clearSelectedMasks();
       
-      toast.success(`Generated ${response.total_masks} masks with improved coverage!`, { 
+      // Cache the masks for future use
+      if (currentImageHash) {
+        setMaskCache(currentImageHash, response.masks, 96, 0.7, 0.8);
+        setIsMaskCached(true);
+      }
+      
+      const cacheStatus = response.cached ? ' (from cache)' : '';
+      toast.success(`Generated ${response.total_masks} masks with improved coverage!${cacheStatus}`, { 
         id: 'generate-masks',
         duration: 4000 
       });
@@ -125,11 +159,11 @@ export default function HomePage() {
     } finally {
       setGeneratingMasks(false);
     }
-  }, [sessionId, setMasks, clearSelectedMasks, setError, setGeneratingMasks]);
+  }, [sessionId, currentImageHash, setMasks, clearSelectedMasks, setMaskCache, setIsMaskCached, setError, setGeneratingMasks]);
 
   // Generate masks with advanced parameters for maximum coverage
   const handleGenerateAdvancedMasks = useCallback(async () => {
-    if (!sessionId) return;
+    if (!sessionId || !currentImageHash) return;
     
     try {
       setGeneratingAdvancedMasks(true);
@@ -137,13 +171,20 @@ export default function HomePage() {
       
       toast.loading('Generating masks with maximum coverage...', { id: 'generate-advanced-masks' });
       
-      // Use maximum coverage parameters
-      const response = await api.generateMasks(sessionId, 128, 0.6, 0.7);
+      // Use maximum coverage parameters with caching
+      const response = await api.generateMasksWithCache(sessionId, currentImageHash, 128, 0.6, 0.7);
       
       setMasks(response.masks);
       clearSelectedMasks();
       
-      toast.success(`Generated ${response.total_masks} masks with maximum coverage!`, { 
+      // Cache the masks for future use
+      if (currentImageHash) {
+        setMaskCache(currentImageHash, response.masks, 128, 0.6, 0.7);
+        setIsMaskCached(true);
+      }
+      
+      const cacheStatus = response.cached ? ' (from cache)' : '';
+      toast.success(`Generated ${response.total_masks} masks with maximum coverage!${cacheStatus}`, { 
         id: 'generate-advanced-masks',
         duration: 4000 
       });
@@ -158,15 +199,15 @@ export default function HomePage() {
     } finally {
       setGeneratingAdvancedMasks(false);
     }
-  }, [sessionId, setMasks, clearSelectedMasks, setError, setGeneratingAdvancedMasks]);
+  }, [sessionId, currentImageHash, setMasks, clearSelectedMasks, setMaskCache, setIsMaskCached, setError, setGeneratingAdvancedMasks]);
 
-  // Handle point click for mask selection
+  // Handle point click for mask selection with caching
   const handlePointClick = useCallback(async (x: number, y: number, isShiftClick: boolean = false, isRightClick: boolean = false) => {
-    if (!sessionId) return;
+    if (!sessionId || !currentImageHash) return;
     
     try {
       if (isClickToGenerateMode) {
-        // Click mode is active - generate a new mask at this point
+        // Click mode is active - generate a new mask at this point with caching
         toast.loading('Generating mask for this area...', { id: 'generate-mask-point' });
         
         const newMask = await generateMaskAtPoint(sessionId, [x, y]);
@@ -177,27 +218,22 @@ export default function HomePage() {
           toast.error('Failed to generate mask for this area. Please try again.', { id: 'generate-mask-point' });
         }
       } else {
-        // Click mode is not active - handle existing mask selection/deselection
+        // Click mode is not active - handle existing mask selection/deselection with instant cache lookup
         if (masks.length > 0) {
           if (isRightClick) {
             // Right-click: Try to deselect masks at this point without calling backend
-            // First check if there's already a selected mask at this point
             const selectedMaskAtPoint = Array.from(selectedMasks).find(maskId => {
               const mask = masks.find(m => m.id === maskId);
               if (!mask) return false;
-              
-              // For now, we'll use a simple approach - if any mask is selected, deselect it
-              // In a more sophisticated implementation, you'd check if the point is within the mask
               return true;
             });
             
             if (selectedMaskAtPoint) {
-              // Deselect the mask without calling backend
               selectMask(selectedMaskAtPoint, false);
               toast.success('Mask deselected!');
             } else {
-              // If no mask is selected at this point, try to find and deselect one
-              const response = await api.getMaskAtPoint(sessionId, [x, y], masks);
+              // Use instant cache lookup if available
+              const response = await api.getMaskAtPointInstant(sessionId, [x, y], currentImageHash, masks);
               const maskIndex = masks.findIndex(m => m.mask === response.mask);
               if (maskIndex !== -1) {
                 const maskId = masks[maskIndex].id;
@@ -208,25 +244,27 @@ export default function HomePage() {
               }
             }
           } else if (isShiftClick) {
-            // Shift+click: Add to selection
-            const response = await api.getMaskAtPoint(sessionId, [x, y], masks);
+            // Shift+click: Add to selection with instant cache lookup
+            const response = await api.getMaskAtPointInstant(sessionId, [x, y], currentImageHash, masks);
             const maskIndex = masks.findIndex(m => m.mask === response.mask);
             if (maskIndex !== -1) {
               const maskId = masks[maskIndex].id;
               selectMask(maskId, true);
-              toast.success('Mask added to selection!');
+              const cacheStatus = response.cached ? ' (instant)' : '';
+              toast.success(`Mask added to selection!${cacheStatus}`);
             } else {
               toast.error('No mask found at this point. Try clicking on a different area.');
             }
           } else {
-            // Normal click: Replace selection
-            const response = await api.getMaskAtPoint(sessionId, [x, y], masks);
+            // Normal click: Replace selection with instant cache lookup
+            const response = await api.getMaskAtPointInstant(sessionId, [x, y], currentImageHash, masks);
             const maskIndex = masks.findIndex(m => m.mask === response.mask);
             if (maskIndex !== -1) {
               const maskId = masks[maskIndex].id;
               clearSelectedMasks();
               selectMask(maskId, true);
-              toast.success('Mask selected!');
+              const cacheStatus = response.cached ? ' (instant)' : '';
+              toast.success(`Mask selected!${cacheStatus}`);
             } else {
               toast.error('No mask found at this point. Try clicking on a different area.');
             }
@@ -242,7 +280,7 @@ export default function HomePage() {
       console.error('Point click error:', err);
       toast.error(`Failed to select area: ${errorMessage}`);
     }
-  }, [sessionId, masks, selectedMasks, selectMask, clearSelectedMasks, generateMaskAtPoint, isClickToGenerateMode]);
+  }, [sessionId, currentImageHash, masks, selectedMasks, selectMask, clearSelectedMasks, generateMaskAtPoint, isClickToGenerateMode]);
 
   // Toggle click to generate mode
   const handleToggleClickToGenerate = useCallback(() => {
@@ -450,7 +488,12 @@ export default function HomePage() {
               </h1>
             </div>
             <div className="text-sm text-gray-500 font-medium">
-              
+              {isEmbeddingCached && isMaskCached && (
+                <span className="flex items-center space-x-2">
+                  <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                  <span>Cached</span>
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -547,6 +590,12 @@ export default function HomePage() {
                         <div className="flex items-center space-x-2">
                           <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
                           <span>{coloredMasks.length} colored</span>
+                        </div>
+                      )}
+                      {(isEmbeddingCached || isMaskCached) && (
+                        <div className="flex items-center space-x-2">
+                          <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                          <span>Cached</span>
                         </div>
                       )}
                     </div>

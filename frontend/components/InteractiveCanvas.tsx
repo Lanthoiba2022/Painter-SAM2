@@ -1,9 +1,10 @@
 'use client';
 
-import React, { useRef, useCallback, useState, useEffect } from 'react';
+import React, { useRef, useCallback, useState, useEffect, useMemo } from 'react';
 import { CanvasProps } from '@/types';
 import { api } from '@/lib/api';
 import { MousePointer, X } from 'lucide-react';
+import { useAppStore } from '@/store/useAppStore';
 
 const InteractiveCanvas: React.FC<CanvasProps> = ({
   imageData,
@@ -23,8 +24,19 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
   const [imageElement, setImageElement] = useState<HTMLImageElement | null>(null);
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 600 });
   const [showInstructions, setShowInstructions] = useState(true);
-  const [loadedMaskImages, setLoadedMaskImages] = useState<Map<number, HTMLImageElement>>(new Map());
-  const [maskDataCache, setMaskDataCache] = useState<Map<number, ImageData>>(new Map());
+  
+  // Enhanced caching state for instant mask highlighting
+  const [loadedMaskImages, setLoadedMaskImages] = useState<Record<number, HTMLImageElement>>({});
+  const [maskDataCache, setMaskDataCache] = useState<Record<number, ImageData>>({});
+  const [maskPixelCache, setMaskPixelCache] = useState<Record<number, Set<string>>>({});
+  const [isHoverEnabled, setIsHoverEnabled] = useState(true);
+  
+  // Get caching state from store
+  const currentImageHash = useAppStore((state) => state.currentImageHash);
+  const isEmbeddingCached = useAppStore((state) => state.isEmbeddingCached);
+  const isMaskCached = useAppStore((state) => state.isMaskCached);
+  const setMaskCache = useAppStore((state) => state.setMaskCache);
+  const getCachedMasks = useAppStore((state) => state.getCachedMasks);
 
   // Load image and calculate canvas size
   useEffect(() => {
@@ -94,17 +106,33 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
       y: Math.round(imageY)
     };
     
-    // Debug logging for coordinate conversion
-    if (Math.random() < 0.01) { // Log only 1% of the time to avoid spam
-      console.log(`Canvas (${canvasX}, ${canvasY}) -> Image (${coords.x}, ${coords.y})`);
-      console.log(`Scale: ${scale}, Offset: (${offsetX}, ${offsetY})`);
-      console.log(`Canvas size: ${canvasSize.width}x${canvasSize.height}, Image size: ${imageElement.width}x${imageElement.height}`);
-    }
-    
     return coords;
   }, [imageElement, canvasSize]);
 
-  // Utility: Check if a point is inside a mask (pixel hit-test) - optimized version
+  // Enhanced mask pixel caching for instant hover detection
+  const buildMaskPixelCache = useCallback((maskId: number, maskData: ImageData) => {
+    const pixelSet = new Set<string>();
+    const { width, height, data } = maskData;
+    
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const pixelIndex = (y * width + x) * 4;
+        const alpha = data[pixelIndex + 3];
+        const red = data[pixelIndex];
+        const green = data[pixelIndex + 1];
+        const blue = data[pixelIndex + 2];
+        
+        // Check if pixel is part of mask
+        if (alpha > 0 || red > 0 || green > 0 || blue > 0) {
+          pixelSet.add(`${x},${y}`);
+        }
+      }
+    }
+    
+    return pixelSet;
+  }, []);
+
+  // Ultra-fast point-in-mask detection using pixel cache
   const isPointInMask = useCallback((maskId: number, x: number, y: number): boolean => {
     try {
       // Check bounds first
@@ -112,52 +140,46 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
         return false;
       }
       
-      // Use cached ImageData for faster detection
-      const maskData = maskDataCache.get(maskId);
+      // Use pixel cache for instant detection
+      const pixelSet = maskPixelCache[maskId];
+      if (pixelSet) {
+        return pixelSet.has(`${x},${y}`);
+      }
+      
+      // Fallback to ImageData if pixel cache not available
+      const maskData = maskDataCache[maskId];
       if (!maskData) {
-        console.warn(`Mask data not cached for mask ${maskId}`);
         return false;
       }
       
-      // Calculate pixel index in the ImageData
       const pixelIndex = (y * imageElement.width + x) * 4;
-      
-      // Check if the pixel has any alpha value (indicating mask presence)
-      // For PNG masks, we check the alpha channel (index 3)
       const alpha = maskData.data[pixelIndex + 3];
       const red = maskData.data[pixelIndex];
       const green = maskData.data[pixelIndex + 1];
       const blue = maskData.data[pixelIndex + 2];
       
-      // Debug: Log the first few pixels of the first mask to understand the format
-      if (maskId === masks[0]?.id && x < 5 && y < 5) {
-        console.log(`Mask ${maskId} pixel at (${x}, ${y}): R=${red}, G=${green}, B=${blue}, A=${alpha}`);
-      }
-      
-      // Check multiple conditions to handle different mask formats
-      const isInMask = alpha > 0 || red > 0 || green > 0 || blue > 0;
-      
-      return isInMask;
+      return alpha > 0 || red > 0 || green > 0 || blue > 0;
     } catch (error) {
       console.error(`Error checking point in mask ${maskId}:`, error);
       return false;
     }
-  }, [imageElement, maskDataCache, masks]);
+  }, [imageElement, maskDataCache, maskPixelCache]);
 
-  // Pre-load mask images for better hover detection - improved version
+  // Pre-load mask images with enhanced caching for instant hover
   useEffect(() => {
     if (masks.length > 0 && imageElement) {
-      console.log(`Loading ${masks.length} mask images...`);
-      const newLoadedImages = new Map<number, HTMLImageElement>();
-      const newMaskDataCache = new Map<number, ImageData>();
+      console.log(`Loading ${masks.length} mask images with enhanced caching...`);
+      const newLoadedImages: Record<number, HTMLImageElement> = {};
+      const newMaskDataCache: Record<number, ImageData> = {};
+      const newMaskPixelCache: Record<number, Set<string>> = {};
       
       const loadPromises = masks.map((mask) => {
         return new Promise<void>((resolve) => {
           const img = new Image();
           img.onload = () => {
-            newLoadedImages.set(mask.id, img);
+            newLoadedImages[mask.id] = img;
             
-            // Create a temporary canvas to extract ImageData for faster hover detection
+            // Create a temporary canvas to extract ImageData for instant hover detection
             const tempCanvas = document.createElement('canvas');
             tempCanvas.width = imageElement.width;
             tempCanvas.height = imageElement.height;
@@ -165,10 +187,14 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
             if (ctx) {
               ctx.drawImage(img, 0, 0);
               const imageData = ctx.getImageData(0, 0, imageElement.width, imageElement.height);
-              newMaskDataCache.set(mask.id, imageData);
+              newMaskDataCache[mask.id] = imageData;
+              
+              // Build pixel cache for ultra-fast hover detection
+              const pixelSet = buildMaskPixelCache(mask.id, imageData);
+              newMaskPixelCache[mask.id] = pixelSet;
             }
             
-            console.log(`Loaded mask ${mask.id}`);
+            console.log(`Loaded mask ${mask.id} with pixel cache`);
             resolve();
           };
           img.onerror = () => {
@@ -180,27 +206,60 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
       });
 
       Promise.all(loadPromises).then(() => {
-        console.log(`Successfully loaded ${newLoadedImages.size} mask images`);
-        setLoadedMaskImages(new Map(newLoadedImages));
-        setMaskDataCache(new Map(newMaskDataCache));
+        console.log(`Successfully loaded ${Object.keys(newLoadedImages).length} mask images with pixel caching`);
+        setLoadedMaskImages(newLoadedImages);
+        setMaskDataCache(newMaskDataCache);
+        setMaskPixelCache(newMaskPixelCache);
+        
+        // Cache masks in store for persistence
+        if (currentImageHash && masks.length > 0) {
+          setMaskCache(currentImageHash, masks, 96, 0.7, 0.8);
+        }
       });
     } else {
       // Clear cache when no masks or no image
-      setLoadedMaskImages(new Map());
-      setMaskDataCache(new Map());
+      setLoadedMaskImages({});
+      setMaskDataCache({});
+      setMaskPixelCache({});
     }
-  }, [masks, imageElement]);
+  }, [masks, imageElement, currentImageHash, setMaskCache, buildMaskPixelCache]);
+
+  // Check for cached masks on image load
+  useEffect(() => {
+    if (currentImageHash && !masks.length) {
+      const cachedMasks = getCachedMasks(currentImageHash);
+      if (cachedMasks && cachedMasks.length > 0) {
+        console.log(`Loading ${cachedMasks.length} cached masks for image ${currentImageHash}`);
+        // The store will handle setting the masks
+      }
+    }
+  }, [currentImageHash, masks.length, getCachedMasks]);
 
   // Cleanup effect
   useEffect(() => {
     return () => {
       // Cleanup on unmount
-      setLoadedMaskImages(new Map());
-      setMaskDataCache(new Map());
+      setLoadedMaskImages({});
+      setMaskDataCache({});
+      setMaskPixelCache({});
     };
   }, []);
 
-  // Draw function with improved mask rendering
+  // Memoized mask lookup for instant hover detection
+  const maskAtPoint = useMemo(() => {
+    if (!imageElement || masks.length === 0) return null;
+    
+    return (x: number, y: number) => {
+      for (const mask of masks) {
+        if (isPointInMask(mask.id, x, y)) {
+          return mask;
+        }
+      }
+      return null;
+    };
+  }, [masks, isPointInMask, imageElement]);
+
+  // Draw function with optimized mask rendering
   const drawCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas || !imageElement) return;
@@ -225,7 +284,7 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
 
     // Function to draw a single mask with given color and opacity
     const drawMask = (mask: any, fillColor: string, opacity: number) => {
-      const maskImg = loadedMaskImages.get(mask.id);
+      const maskImg = loadedMaskImages[mask.id];
       if (!maskImg) return;
 
       ctx.save();
@@ -328,16 +387,41 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
     return colors[index % colors.length];
   };
 
-  // Handle mouse move for hover detection - improved version
+  // Enhanced mouse move handler with instant mask detection
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    // Disable hover detection for image preview - only keep mask gallery hover
-    // This function is now disabled to prevent image preview hover
-  }, []);
+    if (!isHoverEnabled || !imageElement || !maskAtPoint) return;
+
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    // Convert canvas coordinates to image coordinates
+    const imageCoords = canvasToImageCoords(x, y);
+    
+    // Check if mouse is within image bounds
+    if (imageCoords.x >= 0 && imageCoords.x < imageElement.width && 
+        imageCoords.y >= 0 && imageCoords.y < imageElement.height) {
+      
+      // Instant mask detection using pixel cache
+      const maskAtCurrentPoint = maskAtPoint(imageCoords.x, imageCoords.y);
+      
+      if (maskAtCurrentPoint) {
+        setHoveredMaskId(maskAtCurrentPoint.id);
+      } else {
+        setHoveredMaskId(null);
+      }
+    } else {
+      setHoveredMaskId(null);
+    }
+  }, [imageElement, maskAtPoint, canvasToImageCoords, setHoveredMaskId, isHoverEnabled]);
 
   // Handle mouse leave to clear hover
   const handleMouseLeave = useCallback(() => {
-    // Disable hover detection for image preview
-  }, []);
+    setHoveredMaskId(null);
+  }, [setHoveredMaskId]);
 
   // Handle canvas click
   const handleCanvasClick = useCallback(
@@ -432,7 +516,21 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
         }`}
         onClick={handleCanvasClick}
         onContextMenu={handleContextMenu}
+        onMouseMove={handleMouseMove}
+        onMouseLeave={handleMouseLeave}
       />
+      
+      {/* Cache Status Indicator */}
+      {(isEmbeddingCached || isMaskCached) && (
+        <div className="absolute top-6 right-6 bg-gradient-to-r from-blue-500 to-blue-600 text-white px-4 py-2 rounded-xl shadow-xl backdrop-blur-sm border border-blue-400/20">
+          <div className="flex items-center space-x-2">
+            <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+            <span className="text-sm font-medium">
+              {isEmbeddingCached && isMaskCached ? 'Cached' : isEmbeddingCached ? 'Embedding Cached' : 'Masks Cached'}
+            </span>
+          </div>
+        </div>
+      )}
       
       {/* Click Mode Indicator */}
       {isClickToGenerateMode && (
@@ -464,7 +562,7 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
           <div className="space-y-2 text-xs text-gray-600">
             <div className="flex items-center space-x-2">
               <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-              <span>Hover to preview masks</span>
+              <span>Hover to preview masks (instant)</span>
             </div>
             <div className="flex items-center space-x-2">
               <div className="w-2 h-2 bg-green-500 rounded-full"></div>

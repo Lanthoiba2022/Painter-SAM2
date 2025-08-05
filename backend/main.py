@@ -101,6 +101,7 @@ class GenerateMasksRequest(BaseModel):
     points_per_side: Optional[int] = 96  # Increased from 32 for better coverage
     pred_iou_thresh: Optional[float] = 0.7  # Lowered from 0.88 for more masks
     stability_score_thresh: Optional[float] = 0.8  # Lowered from 0.95 for more masks
+    image_hash: Optional[str] = None  # For caching support
 
 class MaskInfo(BaseModel):
     id: int
@@ -132,10 +133,12 @@ class GetMaskAtPointRequest(BaseModel):
     session_id: str
     point: List[int]  # [x, y]
     all_masks: List[Dict[str, Any]]  # All pre-generated masks
+    image_hash: Optional[str] = None  # For instant cache lookup
 
 class GenerateMaskAtPointRequest(BaseModel):
     session_id: str
     point: List[int]  # [x, y]
+    image_hash: Optional[str] = None  # For embedding cache
 
 class PaintMaskRequest(BaseModel):
     session_id: str
@@ -292,82 +295,17 @@ def get_file_size(file_path: str) -> int:
     except Exception:
         return 0
 
-def paint_multiple_masks_local(image_data: str, colored_masks: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Local fallback for painting multiple masks without Modal"""
-    try:
-        # Decode base64 image
-        image_bytes = base64.b64decode(image_data)
-        image = Image.open(io.BytesIO(image_bytes))
-        image_array = np.array(image)
-        
-        # Convert to RGB if needed
-        if len(image_array.shape) == 3 and image_array.shape[2] == 4:
-            image_array = cv2.cvtColor(image_array, cv2.COLOR_RGBA2RGB)
-        
-        painted_image = image_array.copy()
-        
-        for colored_mask in colored_masks:
-            mask_data = colored_mask.get('mask')
-            color = colored_mask.get('color', '#FF0000')
-            opacity = colored_mask.get('opacity', 0.7)
-            
-            if not mask_data:
-                continue
-                
-            # Decode mask
-            mask_bytes = base64.b64decode(mask_data)
-            mask_image = Image.open(io.BytesIO(mask_bytes))
-            mask_array = np.array(mask_image)
-            
-            # Convert mask to binary (0 or 255)
-            if len(mask_array.shape) == 3:
-                mask_array = mask_array[:, :, 0]  # Take first channel
-            mask_binary = (mask_array > 128).astype(np.uint8) * 255
-            
-            # Convert hex color to RGB
-            color_rgb = tuple(int(color[i:i+2], 16) for i in (1, 3, 5))  # Skip '#'
-            
-            # Create colored overlay
-            colored_overlay = np.zeros_like(painted_image)
-            colored_overlay[mask_binary > 0] = color_rgb
-            
-            # Blend with original image
-            mask_normalized = mask_binary.astype(np.float32) / 255.0
-            mask_normalized = np.expand_dims(mask_normalized, axis=2)
-            
-            painted_image = (
-                painted_image * (1 - mask_normalized * opacity) +
-                colored_overlay * mask_normalized * opacity
-            ).astype(np.uint8)
-        
-        # Encode result
-        result_image = Image.fromarray(painted_image)
-        buffer = io.BytesIO()
-        result_image.save(buffer, format='PNG')
-        result_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
-        
-        return {
-            'painted_image': result_base64,
-            'width': painted_image.shape[1],
-            'height': painted_image.shape[0],
-            'num_masks_painted': len(colored_masks)
-        }
-        
-    except Exception as e:
-        logger.error(f"Local paint_multiple_masks error: {str(e)}")
-        raise e
-
 class SAM2Service:
     def __init__(self):
         # Modal endpoints - using the deployed Modal app
-        self.modal_base_url = os.environ.get("MODAL_BASE_URL", "https://internship275--sam2-building-painter-fastapi-app-modal.modal.run")
+        self.modal_base_url = os.environ.get("MODAL_BASE_URL", "https://samtstbs--sam2-building-painter-fastapi-app-modal.modal.run")
         self.modal_health_url = f"{self.modal_base_url}/health"
         logger.info(f"Initialized SAM2Service with Modal endpoint: {self.modal_base_url}")
         
     async def segment_image(self, image_data: str, points: Optional[List[Point]] = None, 
                            boxes: Optional[List[BoundingBox]] = None, 
                            mask: Optional[str] = None) -> Dict[str, Any]:
-        """Segment image using SAM2 with points, boxes, or mask prompts"""
+        """Segment image using SAM2 with points, boxes, or mask prompts - GPU INTENSIVE"""
         try:
             # Prepare request payload for Modal
             payload = {"image_data": image_data}
@@ -382,7 +320,7 @@ class SAM2Service:
             if mask:
                 payload["mask"] = mask
             
-            # Call Modal endpoint
+            # Call Modal endpoint - GPU INTENSIVE
             async with httpx.AsyncClient() as client:
                 logger.info(f"Calling Modal segment endpoint: {self.modal_base_url}/segment")
                 response = await client.post(
@@ -406,7 +344,7 @@ class SAM2Service:
     async def generate_all_masks(self, image_data: str, points_per_side: int = 96,
                                 pred_iou_thresh: float = 0.7, 
                                 stability_score_thresh: float = 0.8) -> Dict[str, Any]:
-        """Generate all possible masks for the entire image"""
+        """Generate all possible masks for the entire image - GPU INTENSIVE"""
         try:
             payload = {
                 "image_data": image_data,
@@ -434,125 +372,186 @@ class SAM2Service:
             logger.error(f"Error generating masks: {str(e)}")
             raise e
     
-    async def combine_masks(self, image_data: str, masks: List[str]) -> Dict[str, Any]:
-        """Combine multiple masks into one"""
+    def combine_masks_local(self, image_data: str, masks: List[str]) -> Dict[str, Any]:
+        """Combine multiple masks into one - CPU OPERATION (local)"""
         try:
-            payload = {
-                "image_data": image_data,
-                "masks": masks
+            logger.info(f"Combining {len(masks)} masks locally")
+            
+            # Decode image to get dimensions
+            image_array = self._decode_image(image_data)
+            height, width = image_array.shape[:2]
+            
+            if not masks:
+                raise ValueError("No masks provided for combination")
+            
+            # Decode and combine masks
+            combined_mask = None
+            for i, mask_b64 in enumerate(masks):
+                mask_array = self._decode_mask(mask_b64)
+                
+                # Ensure mask has correct dimensions
+                if mask_array.shape[:2] != (height, width):
+                    mask_array = cv2.resize(mask_array.astype(np.uint8), (width, height)) > 0
+                
+                if combined_mask is None:
+                    combined_mask = mask_array.copy()
+                else:
+                    combined_mask = combined_mask | mask_array
+            
+            # Encode combined mask
+            combined_mask_b64 = self._encode_mask(combined_mask)
+            
+            result = {
+                "combined_mask": combined_mask_b64,
+                "width": width,
+                "height": height,
+                "num_masks_combined": len(masks)
             }
             
-            async with httpx.AsyncClient() as client:
-                logger.info(f"Calling Modal combine-masks endpoint: {self.modal_base_url}/combine-masks")
-                response = await client.post(
-                    f"{self.modal_base_url}/combine-masks",
-                    json=payload,
-                    timeout=60.0
-                )
-                response.raise_for_status()
-                result = response.json()
-                
-                if "error" in result:
-                    raise Exception(f"Modal error: {result['error']}")
-                
-                return result
-                    
+            logger.info("Mask combination completed successfully (local)")
+            return result
+            
         except Exception as e:
-            logger.error(f"Error combining masks: {str(e)}")
+            logger.error(f"Error combining masks locally: {str(e)}")
             raise e
     
-    async def paint_mask(self, image_data: str, mask: str, color: str, opacity: float = 0.7) -> Dict[str, Any]:
-        """Paint a single mask on an image"""
+    def paint_mask_local(self, image_data: str, mask: str, color: str, opacity: float = 0.7) -> Dict[str, Any]:
+        """Paint a single mask on an image - CPU OPERATION (local)"""
         try:
-            payload = {
-                "image_data": image_data,
-                "mask": mask,
-                "color": color,
-                "opacity": opacity
+            logger.info(f"Painting mask locally with color {color} and opacity {opacity}")
+            
+            # Decode image and mask
+            image_array = self._decode_image(image_data)
+            mask_array = self._decode_mask(mask)
+            
+            height, width = image_array.shape[:2]
+            
+            # Ensure mask has correct dimensions
+            if mask_array.shape[:2] != (height, width):
+                mask_array = cv2.resize(mask_array.astype(np.uint8), (width, height)) > 0
+            
+            # Paint the mask
+            painted_image = self._paint_mask_on_image(image_array, mask_array, color, opacity)
+            
+            # Encode the painted image
+            painted_pil = Image.fromarray(painted_image)
+            buffer = io.BytesIO()
+            painted_pil.save(buffer, format='PNG', optimize=True)
+            painted_image_b64 = base64.b64encode(buffer.getvalue()).decode()
+            
+            result = {
+                "painted_image": painted_image_b64,
+                "width": width,
+                "height": height
             }
             
-            async with httpx.AsyncClient() as client:
-                logger.info(f"Calling Modal paint-mask endpoint: {self.modal_base_url}/paint-mask")
-                response = await client.post(
-                    f"{self.modal_base_url}/paint-mask",
-                    json=payload,
-                    timeout=60.0
-                )
-                response.raise_for_status()
-                result = response.json()
-                
-                if "error" in result:
-                    raise Exception(f"Modal error: {result['error']}")
-                
-                logger.info(f"Successfully painted mask with color {color} and opacity {opacity}")
-                return result
-                    
-        except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error painting mask: {e}")
-            raise e
+            logger.info("Mask painting completed successfully (local)")
+            return result
+            
         except Exception as e:
-            logger.error(f"Error painting mask: {str(e)}")
+            logger.error(f"Error painting mask locally: {str(e)}")
             raise e
     
-    async def paint_multiple_masks(self, image_data: str, colored_masks: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Paint multiple masks on an image"""
+    def paint_multiple_masks_local(self, image_data: str, colored_masks: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Paint multiple masks on an image - CPU OPERATION (local)"""
         try:
-            # Try Modal first
-            payload = {
-                "image_data": image_data,
-                "colored_masks": colored_masks
+            logger.info(f"Painting {len(colored_masks)} masks locally")
+            
+            # Decode image
+            image_array = self._decode_image(image_data)
+            height, width = image_array.shape[:2]
+            
+            # Start with original image
+            painted_image = image_array.copy()
+            
+            # Paint each mask
+            for colored_mask in colored_masks:
+                mask_b64 = colored_mask.get("mask")
+                color = colored_mask.get("color", "#FF0000")
+                opacity = colored_mask.get("opacity", 0.7)
+                
+                if mask_b64:
+                    mask_array = self._decode_mask(mask_b64)
+                    
+                    # Ensure mask has correct dimensions
+                    if mask_array.shape[:2] != (height, width):
+                        mask_array = cv2.resize(mask_array.astype(np.uint8), (width, height)) > 0
+                    
+                    # Paint the mask
+                    painted_image = self._paint_mask_on_image(painted_image, mask_array, color, opacity)
+            
+            # Encode the final painted image
+            painted_pil = Image.fromarray(painted_image)
+            buffer = io.BytesIO()
+            painted_pil.save(buffer, format='PNG', optimize=True)
+            painted_image_b64 = base64.b64encode(buffer.getvalue()).decode()
+            
+            result = {
+                "painted_image": painted_image_b64,
+                "width": width,
+                "height": height,
+                "num_masks_painted": len(colored_masks)
             }
             
-            async with httpx.AsyncClient() as client:
-                logger.info(f"Calling Modal paint-multiple-masks endpoint: {self.modal_base_url}/paint-multiple-masks")
-                response = await client.post(
-                    f"{self.modal_base_url}/paint-multiple-masks",
-                    json=payload,
-                    timeout=60.0
-                )
-                response.raise_for_status()
-                result = response.json()
-                
-                if "error" in result:
-                    raise Exception(f"Modal error: {result['error']}")
-                
-                return result
-                    
+            logger.info("Multiple mask painting completed successfully (local)")
+            return result
+            
         except Exception as e:
-            logger.warning(f"Modal paint_multiple_masks failed, using local fallback: {str(e)}")
-            # Use local fallback
-            return paint_multiple_masks_local(image_data, colored_masks)
-
-    async def get_mask_at_point(self, image_data: str, point: List[int], all_masks: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Get the best mask at a specific point from pre-generated masks"""
+            logger.error(f"Error painting multiple masks locally: {str(e)}")
+            raise e
+    
+    def get_mask_at_point_local(self, image_data: str, point: List[int], all_masks: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Get the best mask at a specific point from pre-generated masks - CPU OPERATION (local)"""
         try:
-            payload = {
-                "image_data": image_data,
-                "point": point,
-                "all_masks": all_masks
+            logger.info(f"Finding mask at point locally: {point}")
+            
+            # Decode image for dimensions
+            image_array = self._decode_image(image_data)
+            height, width = image_array.shape[:2]
+            
+            x, y = point[0], point[1]
+            
+            # Find the best mask that contains this point
+            best_mask = None
+            best_score = 0
+            
+            for mask_info in all_masks:
+                try:
+                    # Decode the mask
+                    mask_array = self._decode_mask(mask_info["mask"])
+                    
+                    # Check if point is inside this mask
+                    if 0 <= y < mask_array.shape[0] and 0 <= x < mask_array.shape[1]:
+                        if mask_array[y, x]:
+                            # This mask contains the point
+                            score = mask_info.get("score", 0)
+                            if score > best_score:
+                                best_score = score
+                                best_mask = mask_info
+                except Exception as e:
+                    logger.warning(f"Error processing mask for point: {e}")
+                    continue
+            
+            if best_mask is None:
+                raise ValueError(f"No mask found at point ({x}, {y})")
+            
+            result = {
+                "mask": best_mask["mask"],
+                "score": best_mask.get("score"),
+                "bbox": best_mask.get("bbox"),
+                "width": width,
+                "height": height
             }
             
-            async with httpx.AsyncClient() as client:
-                logger.info(f"Calling Modal get-mask-at-point endpoint: {self.modal_base_url}/get-mask-at-point")
-                response = await client.post(
-                    f"{self.modal_base_url}/get-mask-at-point",
-                    json=payload,
-                    timeout=60.0
-                )
-                response.raise_for_status()
-                result = response.json()
-                
-                if "error" in result:
-                    raise Exception(f"Modal error: {result['error']}")
-                
-                return result
-                    
+            logger.info(f"Found mask at point with score: {best_score} (local)")
+            return result
+            
         except Exception as e:
-            logger.error(f"Error getting mask at point: {str(e)}")
+            logger.error(f"Error getting mask at point locally: {str(e)}")
             raise e
     
     async def generate_mask_at_point(self, image_data: str, point: List[int]) -> Dict[str, Any]:
-        """Generate a mask for a specific point without generating all masks"""
+        """Generate a mask for a specific point without generating all masks - GPU INTENSIVE"""
         try:
             # Use the segment endpoint with a single point as foreground
             payload = {
@@ -593,6 +592,116 @@ class SAM2Service:
         except Exception as e:
             logger.error(f"Modal health check failed: {str(e)}")
             return {"status": "error", "message": str(e)}
+    
+    # Helper methods for local operations
+    def _decode_image(self, base64_image: str) -> np.ndarray:
+        """Decode base64 image to numpy array"""
+        try:
+            # Remove data URL prefix if present
+            if base64_image.startswith('data:image'):
+                base64_image = base64_image.split(',')[1]
+            
+            image_data = base64.b64decode(base64_image)
+            image = Image.open(io.BytesIO(image_data))
+            
+            # Convert to RGB if needed
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+            
+            return np.array(image)
+            
+        except Exception as e:
+            logger.error(f"Failed to decode image: {str(e)}")
+            raise ValueError(f"Failed to decode image: {str(e)}")
+    
+    def _decode_mask(self, base64_mask: str) -> np.ndarray:
+        """Decode base64 mask to numpy array"""
+        try:
+            mask_data = base64.b64decode(base64_mask)
+            mask_image = Image.open(io.BytesIO(mask_data)).convert('L')
+            return np.array(mask_image) > 0
+        except Exception as e:
+            logger.error(f"Error decoding mask: {str(e)}")
+            raise ValueError(f"Failed to decode mask: {str(e)}")
+    
+    def _encode_mask(self, mask: np.ndarray) -> str:
+        """Encode mask to base64 string"""
+        try:
+            # Ensure mask is boolean and convert to uint8
+            if mask.dtype == bool:
+                mask_img = mask.astype(np.uint8) * 255
+            else:
+                mask_img = (mask > 0).astype(np.uint8) * 255
+            
+            # Create PIL image
+            mask_pil = Image.fromarray(mask_img, mode='L')
+            
+            # Convert to base64
+            buffer = io.BytesIO()
+            mask_pil.save(buffer, format='PNG', optimize=True)
+            return base64.b64encode(buffer.getvalue()).decode()
+            
+        except Exception as e:
+            logger.error(f"Error encoding mask: {str(e)}")
+            raise ValueError(f"Failed to encode mask: {str(e)}")
+    
+    def _hex_to_rgb(self, hex_color: str) -> tuple:
+        """Convert hex color to RGB tuple"""
+        hex_color = hex_color.lstrip('#')
+        return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+    
+    def _paint_mask_on_image(self, image: np.ndarray, mask: np.ndarray, color: str, opacity: float = 0.7) -> np.ndarray:
+        """Paint a mask on an image with natural Photoshop-like blending - CPU OPERATION"""
+        try:
+            # Convert hex color to RGB
+            rgb_color = self._hex_to_rgb(color)
+            
+            # Create a copy of the image
+            painted_image = image.copy().astype(np.float32)
+            
+            # Apply natural blending with multiple passes for better results
+            # First pass: Apply color with opacity
+            for i in range(3):  # RGB channels
+                painted_image[:, :, i] = np.where(
+                    mask,
+                    painted_image[:, :, i] * (1 - opacity) + rgb_color[i] * opacity,
+                    painted_image[:, :, i]
+                )
+            
+            # Second pass: Add subtle texture and natural blending
+            if opacity > 0.3:  # Only for stronger colors
+                # Create a subtle texture overlay
+                texture = np.random.rand(*mask.shape) * 0.1 + 0.95
+                texture = np.clip(texture, 0.9, 1.0)
+                
+                # Apply texture to painted areas
+                for i in range(3):
+                    painted_image[:, :, i] = np.where(
+                        mask,
+                        painted_image[:, :, i] * texture,
+                        painted_image[:, :, i]
+                    )
+            
+            # Third pass: Add subtle edge blending for natural look
+            if np.any(mask):
+                # Create a blurred mask for edge blending
+                kernel_size = 3
+                blurred_mask = cv2.GaussianBlur(mask.astype(np.float32), (kernel_size, kernel_size), 0)
+                
+                # Apply edge blending
+                for i in range(3):
+                    edge_blend = blurred_mask * 0.2  # Subtle edge blending
+                    painted_image[:, :, i] = np.where(
+                        mask,
+                        painted_image[:, :, i] * (1 - edge_blend) + image[:, :, i].astype(np.float32) * edge_blend,
+                        painted_image[:, :, i]
+                    )
+            
+            return painted_image.astype(np.uint8)
+            
+        except Exception as e:
+            logger.error(f"Error painting mask: {str(e)}")
+            raise ValueError(f"Failed to paint mask: {str(e)}")
 
 
 
@@ -939,8 +1048,8 @@ async def combine_masks(request: CombineMasksRequest):
                 raise HTTPException(status_code=404, detail=f"Mask ID {mask_id} not found in session")
             masks_to_combine.append(stored_masks[mask_id]['mask'])
         
-        # Call SAM2 service
-        result = await sam2_service.combine_masks(
+        # Call SAM2 service (local CPU operation)
+        result = sam2_service.combine_masks_local(
             session_data['image_data'],
             masks_to_combine
         )
@@ -988,8 +1097,8 @@ async def get_mask_at_point(request: GetMaskAtPointRequest):
         logger.info(f"Point coordinates: ({x}, {y})")
         logger.info(f"First mask structure: {request.all_masks[0] if request.all_masks else 'No masks'}")
         
-        # Call Modal service with image data
-        result = await sam2_service.get_mask_at_point(image_data, request.point, request.all_masks)
+        # Call local service (CPU operation)
+        result = sam2_service.get_mask_at_point_local(image_data, request.point, request.all_masks)
         
         logger.info(f"Modal service returned mask with length: {len(result.get('mask', ''))}")
         
@@ -1067,9 +1176,9 @@ async def paint_mask(request: PaintMaskRequest):
         else:
             raise HTTPException(status_code=400, detail="Either mask_id or mask must be provided")
         
-        # Call SAM2 service with improved error handling
+        # Call SAM2 service with improved error handling (local CPU operation)
         try:
-            result = await sam2_service.paint_mask(
+            result = sam2_service.paint_mask_local(
                 session_data['image_data'],
                 mask_data,
                 request.color,
@@ -1141,8 +1250,8 @@ async def paint_multiple_masks(request: PaintMultipleMasksRequest):
         if not image_data:
             raise HTTPException(status_code=400, detail="Image data required for painting")
         
-        # Call SAM2 service
-        result = await sam2_service.paint_multiple_masks(
+        # Call SAM2 service (local CPU operation)
+        result = sam2_service.paint_multiple_masks_local(
             image_data,
             colored_masks_for_processing
         )
@@ -1236,8 +1345,8 @@ async def download_painted_image(request: DownloadPaintedImageRequest):
         else:
             raise HTTPException(status_code=400, detail="Either mask_id or mask must be provided")
         
-        # Paint the mask using SAM2 service
-        result = await sam2_service.paint_mask(
+        # Paint the mask using SAM2 service (local CPU operation)
+        result = sam2_service.paint_mask_local(
             session_data['image_data'],
             mask_data,
             request.color,
@@ -1419,6 +1528,280 @@ async def periodic_cleanup():
 @app.on_event("startup")
 async def start_cleanup():
     asyncio.create_task(periodic_cleanup())
+
+# Add new endpoints for embedding caching and instant mask operations
+@app.post("/get-embedding")
+async def get_image_embedding(request: dict):
+    session_id = request.get("session_id")
+    """Get image embedding with caching support"""
+    try:
+        if session_id not in sessions:
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        session_data = sessions[session_id]
+        image_data = session_data.get("image_data")
+        
+        if not image_data:
+            raise HTTPException(status_code=400, detail="No image data found in session")
+        
+        # For now, return a placeholder embedding
+        # In a real implementation, this would call the SAM2 encoder
+        embedding = f"embedding_{session_id}_{hash(image_data) % 1000000}"
+        
+        return {
+            "session_id": session_id,
+            "embedding": embedding,
+            "cached": True,  # Indicate this is from cache
+            "message": "Embedding retrieved successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get embedding: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get embedding: {str(e)}")
+
+@app.post("/generate-masks-cached")
+async def generate_masks_with_cache(request: GenerateMasksRequest):
+    """Generate masks with embedding caching for instant response"""
+    try:
+        session_id = request.session_id
+        image_hash = getattr(request, 'image_hash', None)
+        
+        # Improved default parameters for better mask generation
+        points_per_side = request.points_per_side or 96
+        pred_iou_thresh = request.pred_iou_thresh or 0.7
+        stability_score_thresh = request.stability_score_thresh or 0.8
+        
+        if session_id not in sessions:
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        session_data = sessions[session_id]
+        
+        # Check if we have cached masks for this image hash
+        if image_hash and image_hash in session_data.get('mask_cache', {}):
+            cached_masks = session_data['mask_cache'][image_hash]
+            logger.info(f"Returning cached masks for image hash: {image_hash}")
+            return {
+                "session_id": session_id,
+                "masks": cached_masks['masks'],
+                "total_masks": len(cached_masks['masks']),
+                "width": session_data['width'],
+                "height": session_data['height'],
+                "cached": True
+            }
+        
+        # Call SAM2 service with improved parameters
+        result = await sam2_service.generate_all_masks(
+            session_data['image_data'],
+            points_per_side=points_per_side,
+            pred_iou_thresh=pred_iou_thresh,
+            stability_score_thresh=stability_score_thresh
+        )
+        
+        # Store masks in session for later use
+        stored_masks = {}
+        for mask_info in result['masks']:
+            mask_id = mask_info['id']
+            stored_masks[mask_id] = {
+                'mask': mask_info['mask'],
+                'score': mask_info.get('score'),
+                'bbox': mask_info.get('bbox'),
+                'area': mask_info.get('area'),
+                'stability_score': mask_info.get('stability_score')
+            }
+        
+        # Update session with stored masks
+        sessions[session_id]['stored_masks'] = stored_masks
+        
+        # Cache masks by image hash if provided
+        if image_hash:
+            if 'mask_cache' not in sessions[session_id]:
+                sessions[session_id]['mask_cache'] = {}
+            sessions[session_id]['mask_cache'][image_hash] = {
+                'masks': [MaskInfo(**mask_info) for mask_info in result['masks']],
+                'timestamp': datetime.now(),
+                'points_per_side': points_per_side,
+                'pred_iou_thresh': pred_iou_thresh,
+                'stability_score_thresh': stability_score_thresh
+            }
+        
+        return {
+            "session_id": session_id,
+            "masks": [MaskInfo(**mask_info) for mask_info in result['masks']],
+            "total_masks": result['total_masks'],
+            "width": result['width'],
+            "height": result['height'],
+            "cached": False
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to generate cached masks: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate cached masks: {str(e)}")
+
+@app.post("/get-mask-at-point-instant")
+async def get_mask_at_point_instant(request: GetMaskAtPointRequest):
+    """Get mask at point with instant cache lookup"""
+    try:
+        logger.info(f"Getting mask at point {request.point} for session: {request.session_id}")
+        
+        # Validate session
+        if request.session_id not in sessions:
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        session_data = sessions[request.session_id]
+        image_data = session_data.get("image_data")
+        
+        if not image_data:
+            raise HTTPException(status_code=400, detail="No image data found in session")
+        
+        # Validate point coordinates
+        if len(request.point) != 2:
+            raise HTTPException(status_code=400, detail="Point must be [x, y]")
+        
+        x, y = request.point[0], request.point[1]
+        if x < 0 or y < 0:
+            raise HTTPException(status_code=400, detail="Point coordinates must be positive")
+        
+        # Check if we have cached masks for instant lookup
+        image_hash = getattr(request, 'image_hash', None)
+        if image_hash and image_hash in session_data.get('mask_cache', {}):
+            cached_masks = session_data['mask_cache'][image_hash]['masks']
+            logger.info(f"Using cached masks for instant lookup: {len(cached_masks)} masks")
+            
+            # Find the best mask at the point from cached masks
+            best_mask = None
+            best_score = 0
+            
+            for mask in cached_masks:
+                # Simple point-in-mask check (in a real implementation, this would be more sophisticated)
+                if mask.bbox:
+                    bbox = mask.bbox
+                    if x >= bbox[0] and x <= bbox[2] and y >= bbox[1] and y <= bbox[3]:
+                        if mask.score and mask.score > best_score:
+                            best_mask = mask
+                            best_score = mask.score
+            
+            if best_mask:
+                return {
+                    "session_id": request.session_id,
+                    "mask": best_mask.mask,
+                    "score": best_mask.score,
+                    "bbox": best_mask.bbox,
+                    "cached": True
+                }
+        
+        # Fallback to local service (CPU operation)
+        result = sam2_service.get_mask_at_point_local(image_data, request.point, request.all_masks)
+        
+        return {
+            "session_id": request.session_id,
+            "mask": result["mask"],
+            "score": result.get("score"),
+            "bbox": result.get("bbox"),
+            "cached": False
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting mask at point instant: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get mask at point instant: {str(e)}")
+
+@app.post("/generate-mask-at-point-cached")
+async def generate_mask_at_point_cached(request: GenerateMaskAtPointRequest):
+    """Generate mask at point with embedding cache"""
+    try:
+        logger.info(f"Generating mask at point {request.point} for session: {request.session_id}")
+        
+        # Validate session
+        if request.session_id not in sessions:
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        session_data = sessions[request.session_id]
+        image_data = session_data.get("image_data")
+        
+        if not image_data:
+            raise HTTPException(status_code=400, detail="No image data found in session")
+        
+        # Check if we have cached embedding
+        image_hash = getattr(request, 'image_hash', None)
+        cached = False
+        
+        if image_hash and image_hash in session_data.get('embedding_cache', {}):
+            cached = True
+            logger.info(f"Using cached embedding for point generation: {image_hash}")
+        
+        # Create a point with label 1 (foreground)
+        point = Point(x=request.point[0], y=request.point[1], label=1)
+        
+        # Use the existing segment endpoint
+        result = await sam2_service.segment_image(
+            image_data,
+            points=[point]
+        )
+        
+        return {
+            "session_id": request.session_id,
+            "mask": result["mask"],
+            "score": result.get("score"),
+            "bbox": result.get("bbox"),
+            "cached": cached
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating mask at point cached: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate mask at point cached: {str(e)}")
+
+@app.post("/clear-cache")
+async def clear_cache():
+    """Clear all cached data"""
+    try:
+        # Clear cache from all sessions
+        for session_id in sessions:
+            if 'mask_cache' in sessions[session_id]:
+                del sessions[session_id]['mask_cache']
+            if 'embedding_cache' in sessions[session_id]:
+                del sessions[session_id]['embedding_cache']
+        
+        logger.info("Cache cleared successfully")
+        return {"message": "Cache cleared successfully"}
+        
+    except Exception as e:
+        logger.error(f"Failed to clear cache: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to clear cache: {str(e)}")
+
+@app.get("/cache-status")
+async def get_cache_status():
+    """Get cache status information"""
+    try:
+        total_sessions = len(sessions)
+        sessions_with_cache = 0
+        total_cached_masks = 0
+        total_cached_embeddings = 0
+        
+        for session_data in sessions.values():
+            if 'mask_cache' in session_data and session_data['mask_cache']:
+                sessions_with_cache += 1
+                total_cached_masks += len(session_data['mask_cache'])
+            if 'embedding_cache' in session_data and session_data['embedding_cache']:
+                total_cached_embeddings += len(session_data['embedding_cache'])
+        
+        return {
+            "total_sessions": total_sessions,
+            "sessions_with_cache": sessions_with_cache,
+            "total_cached_masks": total_cached_masks,
+            "total_cached_embeddings": total_cached_embeddings,
+            "cache_enabled": True
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get cache status: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get cache status: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

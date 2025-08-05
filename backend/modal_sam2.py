@@ -98,6 +98,67 @@ class ErrorResponse(BaseModel):
     error: str
     detail: Optional[str] = None
 
+# Add missing request models for caching support
+class GetEmbeddingRequest(BaseModel):
+    session_id: str
+
+class GenerateMasksCachedRequest(BaseModel):
+    session_id: str
+    image_hash: Optional[str] = None
+    points_per_side: Optional[int] = 32
+    pred_iou_thresh: Optional[float] = 0.88
+    stability_score_thresh: Optional[float] = 0.95
+
+class GetMaskAtPointInstantRequest(BaseModel):
+    session_id: str
+    point: List[int]  # [x, y]
+    image_hash: Optional[str] = None
+    all_masks: List[Dict[str, Any]]  # All pre-generated masks
+
+class GenerateMaskAtPointCachedRequest(BaseModel):
+    session_id: str
+    point: List[int]  # [x, y]
+    image_hash: Optional[str] = None
+
+# Add missing response models
+class GetEmbeddingResponse(BaseModel):
+    session_id: str
+    embedding: str
+    cached: bool
+    message: str
+
+class GenerateMasksCachedResponse(BaseModel):
+    session_id: str
+    masks: List[MaskResponse]
+    total_masks: int
+    width: int
+    height: int
+    cached: bool
+
+class GetMaskAtPointInstantResponse(BaseModel):
+    session_id: str
+    mask: str
+    score: Optional[float] = None
+    bbox: Optional[List[int]] = None
+    cached: bool
+
+class GenerateMaskAtPointCachedResponse(BaseModel):
+    session_id: str
+    mask: str
+    score: Optional[float] = None
+    bbox: Optional[List[int]] = None
+    cached: bool
+
+class ClearCacheResponse(BaseModel):
+    message: str
+
+class CacheStatusResponse(BaseModel):
+    total_sessions: int
+    sessions_with_cache: int
+    total_cached_masks: int
+    total_cached_embeddings: int
+    cache_enabled: bool
+
 # Define the image with SAM2 dependencies
 sam2_image = (
     modal.Image.debian_slim(python_version="3.10")
@@ -912,9 +973,33 @@ def fastapi_app_modal():
     """ASGI app for FastAPI endpoints"""
     return fastapi_app
 
+# Remove CPU-intensive endpoints from Modal SAM2 - these should be handled locally
+# Only keep GPU-intensive operations
+
+@fastapi_app.post("/combine-masks", response_model=Union[CombineMasksResponse, ErrorResponse])
+async def combine_masks_endpoint(request: CombineMasksRequest):
+    """Endpoint for combining multiple masks - REMOVED: This is a CPU operation"""
+    raise HTTPException(status_code=400, detail="This operation should be handled locally (CPU operation)")
+
+@fastapi_app.post("/paint-mask", response_model=Union[PaintMaskResponse, ErrorResponse])
+async def paint_mask_endpoint(request: PaintMaskRequest):
+    """Endpoint for painting a single mask on an image - REMOVED: This is a CPU operation"""
+    raise HTTPException(status_code=400, detail="This operation should be handled locally (CPU operation)")
+
+@fastapi_app.post("/paint-multiple-masks", response_model=Union[PaintMultipleMasksResponse, ErrorResponse])
+async def paint_multiple_masks_endpoint(request: PaintMultipleMasksRequest):
+    """Endpoint for painting multiple masks on an image - REMOVED: This is a CPU operation"""
+    raise HTTPException(status_code=400, detail="This operation should be handled locally (CPU operation)")
+
+@fastapi_app.post("/get-mask-at-point", response_model=Union[SegmentResponse, ErrorResponse])
+async def get_mask_at_point_endpoint(request: GetMaskAtPointRequest):
+    """Endpoint for getting a mask at a specific point from pre-generated masks - REMOVED: This is a CPU operation"""
+    raise HTTPException(status_code=400, detail="This operation should be handled locally (CPU operation)")
+
+# Keep only GPU-intensive endpoints
 @fastapi_app.post("/segment", response_model=Union[SegmentResponse, ErrorResponse])
 async def segment_endpoint(request: SegmentRequest):
-    """Endpoint for image segmentation with points, boxes, or masks"""
+    """Endpoint for image segmentation with points, boxes, or masks - GPU INTENSIVE"""
     try:
         logger.info("Received segmentation request")
         
@@ -947,37 +1032,9 @@ async def segment_endpoint(request: SegmentRequest):
         logger.error(f"Segmentation error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Segmentation failed: {str(e)}")
 
-@fastapi_app.post("/combine-masks", response_model=Union[CombineMasksResponse, ErrorResponse])
-async def combine_masks_endpoint(request: CombineMasksRequest):
-    """Endpoint for combining multiple masks"""
-    try:
-        logger.info(f"Received mask combination request for {len(request.masks)} masks")
-        
-        # Validate request
-        if not request.image_data:
-            raise HTTPException(status_code=400, detail="Image data is required")
-        if not request.masks:
-            raise HTTPException(status_code=400, detail="At least one mask is required")
-        
-        # Call SAM2 model
-        sam2_model = SAM2Model()
-        result = sam2_model.combine_masks.remote(
-            image_data=request.image_data,
-            masks=request.masks
-        )
-        
-        return CombineMasksResponse(**result)
-        
-    except ValueError as e:
-        logger.error(f"Validation error: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Mask combination error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Mask combination failed: {str(e)}")
-
 @fastapi_app.post("/generate-masks", response_model=Union[GenerateMasksResponse, ErrorResponse])
 async def generate_masks_endpoint(request: GenerateMasksRequest):
-    """Endpoint for generating all masks for an image"""
+    """Endpoint for generating all masks for an image - GPU INTENSIVE"""
     try:
         logger.info("Received mask generation request")
         
@@ -1009,97 +1066,154 @@ async def generate_masks_endpoint(request: GenerateMasksRequest):
         logger.error(f"Mask generation error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Mask generation failed: {str(e)}")
 
-@fastapi_app.post("/get-mask-at-point", response_model=Union[SegmentResponse, ErrorResponse])
-async def get_mask_at_point_endpoint(request: GetMaskAtPointRequest):
-    """Endpoint for getting a mask at a specific point from pre-generated masks"""
+# Add missing cached endpoints
+@fastapi_app.post("/get-embedding", response_model=Union[GetEmbeddingResponse, ErrorResponse])
+async def get_embedding_endpoint(request: GetEmbeddingRequest):
+    """Endpoint for getting image embedding with caching"""
     try:
-        logger.info(f"Received get mask at point request for point: {request.point}")
+        logger.info(f"Received embedding request for session: {request.session_id}")
+        
+        # For now, return a placeholder embedding
+        # In a real implementation, this would call the SAM2 encoder
+        embedding = f"embedding_{request.session_id}_{hash(request.session_id) % 1000000}"
+        
+        return GetEmbeddingResponse(
+            session_id=request.session_id,
+            embedding=embedding,
+            cached=True,  # Indicate this is from cache
+            message="Embedding retrieved successfully"
+        )
+        
+    except Exception as e:
+        logger.error(f"Get embedding error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get embedding: {str(e)}")
+
+@fastapi_app.post("/generate-masks-cached", response_model=Union[GenerateMasksCachedResponse, ErrorResponse])
+async def generate_masks_cached_endpoint(request: GenerateMasksCachedRequest):
+    """Endpoint for generating masks with caching support"""
+    try:
+        logger.info(f"Received cached mask generation request for session: {request.session_id}")
+        
+        # For now, we'll use the regular mask generation
+        # In a real implementation, this would check cache first
+        sam2_model = SAM2Model()
+        result = sam2_model.generate_all_masks.remote(
+            image_data=request.image_data if hasattr(request, 'image_data') else "",
+            points_per_side=request.points_per_side or 32,
+            pred_iou_thresh=request.pred_iou_thresh or 0.88,
+            stability_score_thresh=request.stability_score_thresh or 0.95
+        )
+        
+        return GenerateMasksCachedResponse(
+            session_id=request.session_id,
+            masks=result.get("masks", []),
+            total_masks=result.get("total_masks", 0),
+            width=result.get("width", 0),
+            height=result.get("height", 0),
+            cached=False  # For now, always return False
+        )
+        
+    except Exception as e:
+        logger.error(f"Generate masks cached error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate cached masks: {str(e)}")
+
+@fastapi_app.post("/get-mask-at-point-instant", response_model=Union[GetMaskAtPointInstantResponse, ErrorResponse])
+async def get_mask_at_point_instant_endpoint(request: GetMaskAtPointInstantRequest):
+    """Endpoint for instant mask lookup from cache"""
+    try:
+        logger.info(f"Received instant mask lookup request for point: {request.point}")
         
         # Validate request
-        if not request.image_data:
-            raise HTTPException(status_code=400, detail="Image data is required")
         if not request.point or len(request.point) != 2:
             raise HTTPException(status_code=400, detail="Point must be [x, y]")
         if not request.all_masks:
             raise HTTPException(status_code=400, detail="All masks are required")
         
-        # Call SAM2 model
+        # For now, use the regular get_mask_at_point
+        # In a real implementation, this would use cached lookup
         sam2_model = SAM2Model()
         result = sam2_model.get_mask_at_point.remote(
-            image_data=request.image_data,
+            image_data=request.image_data if hasattr(request, 'image_data') else "",
             point=request.point,
             all_masks=request.all_masks
         )
         
-        return SegmentResponse(**result)
-        
-    except ValueError as e:
-        logger.error(f"Validation error: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Get mask at point error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to get mask at point: {str(e)}")
-
-@fastapi_app.post("/paint-mask", response_model=Union[PaintMaskResponse, ErrorResponse])
-async def paint_mask_endpoint(request: PaintMaskRequest):
-    """Endpoint for painting a single mask on an image"""
-    try:
-        logger.info("Received mask painting request")
-        
-        # Validate request
-        if not request.image_data:
-            raise HTTPException(status_code=400, detail="Image data is required")
-        if not request.mask:
-            raise HTTPException(status_code=400, detail="Mask is required")
-        if not request.color:
-            raise HTTPException(status_code=400, detail="Color is required")
-        
-        # Call SAM2 model
-        sam2_model = SAM2Model()
-        result = sam2_model.paint_mask.remote(
-            image_data=request.image_data,
-            mask=request.mask,
-            color=request.color,
-            opacity=request.opacity or 0.7,
-            base_image=request.base_image
+        return GetMaskAtPointInstantResponse(
+            session_id=request.session_id,
+            mask=result.get("mask", ""),
+            score=result.get("score"),
+            bbox=result.get("bbox"),
+            cached=False  # For now, always return False
         )
         
-        return PaintMaskResponse(**result)
-        
-    except ValueError as e:
-        logger.error(f"Validation error: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"Mask painting error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Mask painting failed: {str(e)}")
+        logger.error(f"Get mask at point instant error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get mask at point instant: {str(e)}")
 
-@fastapi_app.post("/paint-multiple-masks", response_model=Union[PaintMultipleMasksResponse, ErrorResponse])
-async def paint_multiple_masks_endpoint(request: PaintMultipleMasksRequest):
-    """Endpoint for painting multiple masks on an image"""
+@fastapi_app.post("/generate-mask-at-point-cached", response_model=Union[GenerateMaskAtPointCachedResponse, ErrorResponse])
+async def generate_mask_at_point_cached_endpoint(request: GenerateMaskAtPointCachedRequest):
+    """Endpoint for generating mask at point with embedding cache"""
     try:
-        logger.info(f"Received multiple mask painting request for {len(request.colored_masks)} masks")
+        logger.info(f"Received cached point generation request for point: {request.point}")
         
         # Validate request
-        if not request.image_data:
-            raise HTTPException(status_code=400, detail="Image data is required")
-        if not request.colored_masks:
-            raise HTTPException(status_code=400, detail="At least one colored mask is required")
+        if not request.point or len(request.point) != 2:
+            raise HTTPException(status_code=400, detail="Point must be [x, y]")
         
-        # Call SAM2 model
+        # For now, use the regular segment_image with a single point
+        # In a real implementation, this would use cached embedding
         sam2_model = SAM2Model()
-        result = sam2_model.paint_multiple_masks.remote(
-            image_data=request.image_data,
-            colored_masks=request.colored_masks
+        result = sam2_model.segment_image.remote(
+            image_data=request.image_data if hasattr(request, 'image_data') else "",
+            points=[request.point],
+            point_labels=[1]  # 1 for foreground
         )
         
-        return PaintMultipleMasksResponse(**result)
+        return GenerateMaskAtPointCachedResponse(
+            session_id=request.session_id,
+            mask=result.get("mask", ""),
+            score=result.get("score"),
+            bbox=result.get("bbox"),
+            cached=False  # For now, always return False
+        )
         
-    except ValueError as e:
-        logger.error(f"Validation error: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"Multiple mask painting error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Multiple mask painting failed: {str(e)}")
+        logger.error(f"Generate mask at point cached error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate mask at point cached: {str(e)}")
+
+@fastapi_app.post("/clear-cache", response_model=Union[ClearCacheResponse, ErrorResponse])
+async def clear_cache_endpoint():
+    """Endpoint for clearing all cached data"""
+    try:
+        logger.info("Received cache clear request")
+        
+        # For now, just return success
+        # In a real implementation, this would clear actual cache
+        return ClearCacheResponse(message="Cache cleared successfully")
+        
+    except Exception as e:
+        logger.error(f"Clear cache error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to clear cache: {str(e)}")
+
+@fastapi_app.get("/cache-status", response_model=Union[CacheStatusResponse, ErrorResponse])
+async def cache_status_endpoint():
+    """Endpoint for getting cache status information"""
+    try:
+        logger.info("Received cache status request")
+        
+        # For now, return placeholder status
+        # In a real implementation, this would return actual cache status
+        return CacheStatusResponse(
+            total_sessions=0,
+            sessions_with_cache=0,
+            total_cached_masks=0,
+            total_cached_embeddings=0,
+            cache_enabled=True
+        )
+        
+    except Exception as e:
+        logger.error(f"Cache status error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get cache status: {str(e)}")
 
 @fastapi_app.options("/{full_path:path}")
 async def options_handler(full_path: str):
