@@ -24,6 +24,7 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 600 });
   const [showInstructions, setShowInstructions] = useState(true);
   const [loadedMaskImages, setLoadedMaskImages] = useState<Map<number, HTMLImageElement>>(new Map());
+  const [maskDataCache, setMaskDataCache] = useState<Map<number, ImageData>>(new Map());
 
   // Load image and calculate canvas size
   useEffect(() => {
@@ -77,7 +78,7 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
     return () => window.removeEventListener('resize', handleResize);
   }, [imageElement, updateCanvasSize]);
 
-  // Convert canvas coordinates to image coordinates
+  // Convert canvas coordinates to image coordinates - improved version
   const canvasToImageCoords = useCallback((canvasX: number, canvasY: number) => {
     if (!imageElement) return { x: 0, y: 0 };
     
@@ -88,13 +89,22 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
     const imageX = (canvasX - offsetX) / scale;
     const imageY = (canvasY - offsetY) / scale;
     
-    return {
+    const coords = {
       x: Math.round(imageX),
       y: Math.round(imageY)
     };
+    
+    // Debug logging for coordinate conversion
+    if (Math.random() < 0.01) { // Log only 1% of the time to avoid spam
+      console.log(`Canvas (${canvasX}, ${canvasY}) -> Image (${coords.x}, ${coords.y})`);
+      console.log(`Scale: ${scale}, Offset: (${offsetX}, ${offsetY})`);
+      console.log(`Canvas size: ${canvasSize.width}x${canvasSize.height}, Image size: ${imageElement.width}x${imageElement.height}`);
+    }
+    
+    return coords;
   }, [imageElement, canvasSize]);
 
-  // Utility: Check if a point is inside a mask (pixel hit-test)
+  // Utility: Check if a point is inside a mask (pixel hit-test) - optimized version
   const isPointInMask = useCallback((maskId: number, x: number, y: number): boolean => {
     try {
       // Check bounds first
@@ -102,41 +112,63 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
         return false;
       }
       
-      // Get the pre-loaded mask image
-      const maskImage = loadedMaskImages.get(maskId);
-      if (!maskImage) {
+      // Use cached ImageData for faster detection
+      const maskData = maskDataCache.get(maskId);
+      if (!maskData) {
+        console.warn(`Mask data not cached for mask ${maskId}`);
         return false;
       }
       
-      // Create a temporary canvas
-      const tempCanvas = document.createElement('canvas');
-      tempCanvas.width = imageElement.width;
-      tempCanvas.height = imageElement.height;
-      const ctx = tempCanvas.getContext('2d');
-      if (!ctx) return false;
-      
-      // Draw the mask and check pixel
-      ctx.drawImage(maskImage, 0, 0);
-      const pixel = ctx.getImageData(x, y, 1, 1).data;
+      // Calculate pixel index in the ImageData
+      const pixelIndex = (y * imageElement.width + x) * 4;
       
       // Check if the pixel has any alpha value (indicating mask presence)
-      return pixel[3] > 0;
+      // For PNG masks, we check the alpha channel (index 3)
+      const alpha = maskData.data[pixelIndex + 3];
+      const red = maskData.data[pixelIndex];
+      const green = maskData.data[pixelIndex + 1];
+      const blue = maskData.data[pixelIndex + 2];
+      
+      // Debug: Log the first few pixels of the first mask to understand the format
+      if (maskId === masks[0]?.id && x < 5 && y < 5) {
+        console.log(`Mask ${maskId} pixel at (${x}, ${y}): R=${red}, G=${green}, B=${blue}, A=${alpha}`);
+      }
+      
+      // Check multiple conditions to handle different mask formats
+      const isInMask = alpha > 0 || red > 0 || green > 0 || blue > 0;
+      
+      return isInMask;
     } catch (error) {
-      // If there's any error, return false
+      console.error(`Error checking point in mask ${maskId}:`, error);
       return false;
     }
-  }, [imageElement, loadedMaskImages]);
+  }, [imageElement, maskDataCache, masks]);
 
-  // Pre-load mask images for better hover detection
+  // Pre-load mask images for better hover detection - improved version
   useEffect(() => {
     if (masks.length > 0 && imageElement) {
+      console.log(`Loading ${masks.length} mask images...`);
       const newLoadedImages = new Map<number, HTMLImageElement>();
+      const newMaskDataCache = new Map<number, ImageData>();
       
       const loadPromises = masks.map((mask) => {
         return new Promise<void>((resolve) => {
           const img = new Image();
           img.onload = () => {
             newLoadedImages.set(mask.id, img);
+            
+            // Create a temporary canvas to extract ImageData for faster hover detection
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = imageElement.width;
+            tempCanvas.height = imageElement.height;
+            const ctx = tempCanvas.getContext('2d');
+            if (ctx) {
+              ctx.drawImage(img, 0, 0);
+              const imageData = ctx.getImageData(0, 0, imageElement.width, imageElement.height);
+              newMaskDataCache.set(mask.id, imageData);
+            }
+            
+            console.log(`Loaded mask ${mask.id}`);
             resolve();
           };
           img.onerror = () => {
@@ -148,10 +180,25 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
       });
 
       Promise.all(loadPromises).then(() => {
+        console.log(`Successfully loaded ${newLoadedImages.size} mask images`);
         setLoadedMaskImages(new Map(newLoadedImages));
+        setMaskDataCache(new Map(newMaskDataCache));
       });
+    } else {
+      // Clear cache when no masks or no image
+      setLoadedMaskImages(new Map());
+      setMaskDataCache(new Map());
     }
   }, [masks, imageElement]);
+
+  // Cleanup effect
+  useEffect(() => {
+    return () => {
+      // Cleanup on unmount
+      setLoadedMaskImages(new Map());
+      setMaskDataCache(new Map());
+    };
+  }, []);
 
   // Draw function with improved mask rendering
   const drawCanvas = useCallback(() => {
@@ -281,49 +328,16 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
     return colors[index % colors.length];
   };
 
-  // Handle mouse move for hover detection
+  // Handle mouse move for hover detection - improved version
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!imageElement || masks.length === 0 || loadedMaskImages.size === 0) {
-      setHoveredMaskId(null);
-      return;
-    }
-    
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    
-    const rect = canvas.getBoundingClientRect();
-    const x = Math.round(e.clientX - rect.left);
-    const y = Math.round(e.clientY - rect.top);
-    
-    // Convert to image coordinates
-    const imageCoords = canvasToImageCoords(x, y);
-    
-    if (
-      imageCoords.x >= 0 && imageCoords.x < imageElement.width &&
-      imageCoords.y >= 0 && imageCoords.y < imageElement.height
-    ) {
-      // Find the topmost mask under the cursor
-      let foundMaskId: number | null = null;
-      
-      // Check masks in reverse order (top to bottom) to get the most recently drawn/topmost mask
-      for (let i = masks.length - 1; i >= 0; i--) {
-        const mask = masks[i];
-        if (isPointInMask(mask.id, imageCoords.x, imageCoords.y)) {
-          foundMaskId = mask.id;
-          break;
-        }
-      }
-      
-      setHoveredMaskId(foundMaskId);
-    } else {
-      setHoveredMaskId(null);
-    }
-  }, [imageElement, masks, canvasToImageCoords, setHoveredMaskId, isPointInMask, loadedMaskImages.size]);
+    // Disable hover detection for image preview - only keep mask gallery hover
+    // This function is now disabled to prevent image preview hover
+  }, []);
 
   // Handle mouse leave to clear hover
   const handleMouseLeave = useCallback(() => {
-    setHoveredMaskId(null);
-  }, [setHoveredMaskId]);
+    // Disable hover detection for image preview
+  }, []);
 
   // Handle canvas click
   const handleCanvasClick = useCallback(
@@ -418,8 +432,6 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
         }`}
         onClick={handleCanvasClick}
         onContextMenu={handleContextMenu}
-        onMouseMove={handleMouseMove}
-        onMouseLeave={handleMouseLeave}
       />
       
       {/* Click Mode Indicator */}
@@ -470,29 +482,6 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
         </div>
       )}
       
-      {/* Modern Status Panel */}
-      <div className="absolute bottom-6 left-6 bg-white/95 backdrop-blur-md border border-gray-200/50 rounded-xl p-4 shadow-xl">
-        <div className="space-y-3">
-          <div className="flex items-center space-x-3">
-            <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
-            <span className="text-sm font-medium text-gray-700">Masks: {masks.length}</span>
-          </div>
-          <div className="flex items-center space-x-3">
-            <div className="w-3 h-3 bg-green-500 rounded-full"></div>
-            <span className="text-sm font-medium text-gray-700">Selected: {selectedMasks.size}</span>
-          </div>
-          <div className="flex items-center space-x-3">
-            <div className="w-3 h-3 bg-purple-500 rounded-full"></div>
-            <span className="text-sm font-medium text-gray-700">Colored: {coloredMasks.length}</span>
-          </div>
-          {hoveredMaskId && (
-            <div className="flex items-center space-x-3">
-              <div className="w-3 h-3 bg-cyan-500 rounded-full animate-pulse"></div>
-              <span className="text-sm font-medium text-gray-700">Hovering: #{hoveredMaskId}</span>
-            </div>
-          )}
-        </div>
-      </div>
     </div>
   );
 };

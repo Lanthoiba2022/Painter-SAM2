@@ -21,6 +21,10 @@ import numpy as np
 from PIL import Image, ImageDraw
 import io
 import base64
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -356,8 +360,8 @@ def paint_multiple_masks_local(image_data: str, colored_masks: List[Dict[str, An
 class SAM2Service:
     def __init__(self):
         # Modal endpoints - using the deployed Modal app
-        self.modal_base_url = os.getenv("MODAL_BASE_URL", "https://internship304--sam2-building-painter-fastapi-app-modal.modal.run")
-        self.modal_health_url = os.getenv("MODAL_HEALTH_URL", "https://internship304--sam2-building-painter-fastapi-app-modal.modal.run/health")
+        self.modal_base_url = os.environ.get("MODAL_BASE_URL", "https://internship275--sam2-building-painter-fastapi-app-modal.modal.run")
+        self.modal_health_url = f"{self.modal_base_url}/health"
         logger.info(f"Initialized SAM2Service with Modal endpoint: {self.modal_base_url}")
         
     async def segment_image(self, image_data: str, points: Optional[List[Point]] = None, 

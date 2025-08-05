@@ -11,6 +11,7 @@ interface MaskGalleryProps {
   hoveredMaskId: number | null;
   onMaskSelect: (maskId: number, isSelected: boolean) => void;
   onMaskHover?: (maskId: number | null) => void;
+  onMaskDeselect?: (maskId: number) => void;
 }
 
 const MaskGallery: React.FC<MaskGalleryProps> = ({
@@ -19,6 +20,7 @@ const MaskGallery: React.FC<MaskGalleryProps> = ({
   hoveredMaskId,
   onMaskSelect,
   onMaskHover,
+  onMaskDeselect,
 }) => {
   if (masks.length === 0) {
     return null;
@@ -104,6 +106,24 @@ const MaskGallery: React.FC<MaskGalleryProps> = ({
                   >
                     <CheckCircle className="w-6 h-6 text-blue-600 bg-white rounded-full shadow-lg" />
                   </motion.div>
+                )}
+                
+                {/* Deselect button */}
+                {onMaskDeselect && isSelected && (
+                  <motion.button
+                    initial={{ scale: 0 }}
+                    animate={{ scale: 1 }}
+                    whileHover={{ scale: 1.1 }}
+                    whileTap={{ scale: 0.9 }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onMaskDeselect(mask.id);
+                    }}
+                    className="absolute top-2 left-2 w-6 h-6 bg-orange-500 hover:bg-orange-600 text-white rounded-full shadow-lg flex items-center justify-center transition-colors"
+                    title="Deselect mask"
+                  >
+                    <span className="text-xs font-bold">−</span>
+                  </motion.button>
                 )}
                 
                 {/* Mask info overlay */}

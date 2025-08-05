@@ -220,23 +220,16 @@ export const useAppStore = create<AppStore>()(
             // Add to masks array (don't clear existing masks)
             const updatedMasks = [...state.masks, newMask];
             
-            // Auto-select the new mask
+            // Auto-select the new mask but DON'T automatically color it
             const updatedSelectedMasks = new Set([newMask.id]);
             
-            // Add to colored masks with current color and opacity
-            const newColoredMask: ColoredMask = {
-              mask_id: newMask.id,
-              mask: newMask.mask,
-              color: state.currentColor,
-              opacity: state.currentOpacity,
-            };
-            
-            const updatedColoredMasks = [...state.coloredMasks, newColoredMask];
+            // Don't add to colored masks automatically - let user choose when to paint
+            // This allows the mask to be properly selected/unselected
             
             return {
               masks: updatedMasks,
               selectedMasks: updatedSelectedMasks,
-              coloredMasks: updatedColoredMasks,
+              // Don't modify coloredMasks here
             };
           }, false, 'generateMaskAtPoint');
           

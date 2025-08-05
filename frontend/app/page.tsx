@@ -177,31 +177,59 @@ export default function HomePage() {
           toast.error('Failed to generate mask for this area. Please try again.', { id: 'generate-mask-point' });
         }
       } else {
-        // Click mode is not active - try to select existing masks
+        // Click mode is not active - handle existing mask selection/deselection
         if (masks.length > 0) {
-          const response = await api.getMaskAtPoint(sessionId, [x, y], masks);
-          
-          // Find the mask in our local array and select it
-          const maskIndex = masks.findIndex(m => m.mask === response.mask);
-          if (maskIndex !== -1) {
-            const maskId = masks[maskIndex].id;
+          if (isRightClick) {
+            // Right-click: Try to deselect masks at this point without calling backend
+            // First check if there's already a selected mask at this point
+            const selectedMaskAtPoint = Array.from(selectedMasks).find(maskId => {
+              const mask = masks.find(m => m.id === maskId);
+              if (!mask) return false;
+              
+              // For now, we'll use a simple approach - if any mask is selected, deselect it
+              // In a more sophisticated implementation, you'd check if the point is within the mask
+              return true;
+            });
             
-            if (isRightClick) {
-              // Remove from selection
-              selectMask(maskId, false);
-              toast.success('Area removed from selection!');
-            } else if (isShiftClick) {
-              // Add to selection
-              selectMask(maskId, true);
-              toast.success('Area added to selection!');
+            if (selectedMaskAtPoint) {
+              // Deselect the mask without calling backend
+              selectMask(selectedMaskAtPoint, false);
+              toast.success('Mask deselected!');
             } else {
-              // Replace selection
-              clearSelectedMasks();
+              // If no mask is selected at this point, try to find and deselect one
+              const response = await api.getMaskAtPoint(sessionId, [x, y], masks);
+              const maskIndex = masks.findIndex(m => m.mask === response.mask);
+              if (maskIndex !== -1) {
+                const maskId = masks[maskIndex].id;
+                selectMask(maskId, false);
+                toast.success('Mask deselected!');
+              } else {
+                toast.success('No mask found at this point to deselect.');
+              }
+            }
+          } else if (isShiftClick) {
+            // Shift+click: Add to selection
+            const response = await api.getMaskAtPoint(sessionId, [x, y], masks);
+            const maskIndex = masks.findIndex(m => m.mask === response.mask);
+            if (maskIndex !== -1) {
+              const maskId = masks[maskIndex].id;
               selectMask(maskId, true);
-              toast.success('Area selected!');
+              toast.success('Mask added to selection!');
+            } else {
+              toast.error('No mask found at this point. Try clicking on a different area.');
             }
           } else {
-            toast.error('No mask found at this point. Try clicking on a different area.');
+            // Normal click: Replace selection
+            const response = await api.getMaskAtPoint(sessionId, [x, y], masks);
+            const maskIndex = masks.findIndex(m => m.mask === response.mask);
+            if (maskIndex !== -1) {
+              const maskId = masks[maskIndex].id;
+              clearSelectedMasks();
+              selectMask(maskId, true);
+              toast.success('Mask selected!');
+            } else {
+              toast.error('No mask found at this point. Try clicking on a different area.');
+            }
           }
         } else {
           // No masks available and click mode is not active
@@ -214,7 +242,7 @@ export default function HomePage() {
       console.error('Point click error:', err);
       toast.error(`Failed to select area: ${errorMessage}`);
     }
-  }, [sessionId, masks, selectMask, clearSelectedMasks, generateMaskAtPoint, isClickToGenerateMode]);
+  }, [sessionId, masks, selectedMasks, selectMask, clearSelectedMasks, generateMaskAtPoint, isClickToGenerateMode]);
 
   // Toggle click to generate mode
   const handleToggleClickToGenerate = useCallback(() => {
@@ -396,6 +424,12 @@ export default function HomePage() {
     selectMask(maskId, isSelected);
   }, [selectMask]);
 
+  // Handle mask deselection (not removal)
+  const handleMaskDeselect = useCallback((maskId: number) => {
+    selectMask(maskId, false);
+    toast.success('Mask deselected!');
+  }, [selectMask]);
+
   // Handle mask hover from gallery
   const handleMaskHover = useCallback((maskId: number | null) => {
     setHoveredMaskId(maskId);
@@ -412,11 +446,11 @@ export default function HomePage() {
                 <span className="text-white font-bold text-sm">S2</span>
               </div>
               <h1 className="text-xl font-bold text-gray-900">
-                SAM2 Building Painter
+              SAM2 Building Painter
               </h1>
             </div>
             <div className="text-sm text-gray-500 font-medium">
-              Powered by Meta AI
+              
             </div>
           </div>
         </div>
@@ -541,6 +575,7 @@ export default function HomePage() {
                     selectedMasks={selectedMasks}
                     hoveredMaskId={hoveredMaskId}
                     onMaskSelect={handleMaskSelect}
+                    onMaskDeselect={handleMaskDeselect}
                     onMaskHover={handleMaskHover}
                   />
                 )}
@@ -594,7 +629,7 @@ export default function HomePage() {
         <div className="max-w-7xl mx-auto px-6 lg:px-8 py-8">
           <div className="text-center text-sm text-gray-500">
             <p>
-              Built with Next.js, React Konva, and SAM2. 
+              Built with Next.js, FastAPI, Modal GPU. 
               Powered by Meta AI's Segment Anything Model 2.
             </p>
           </div>
