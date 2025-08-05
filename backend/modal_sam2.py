@@ -628,180 +628,179 @@ class SAM2Model:
             logger.error(f"Error in combine_masks: {str(e)}")
             raise e
 
-    # COMMENTED OUT - Generate All Masks method
-    # @modal.method()
-    # def generate_all_masks(self, image_data: str, points_per_side: int = 32, 
-    #                       pred_iou_thresh: float = 0.88, 
-    #                       stability_score_thresh: float = 0.95) -> Dict[str, Any]:
-    #     """Generate all possible masks for the entire image"""
-    #     try:
-    #         logger.info("Starting automatic mask generation")
-    #         
-    #         # Clear GPU cache before processing
-    #         if torch.cuda.is_available():
-    #             torch.cuda.empty_cache()
-    #             logger.info(f"GPU memory before mask generation: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
-    #         
-    #         # Ensure we have the required imports
-    #         import sys
-    #         sys.path.append('/root/sam2')
-    #         from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator
+    @modal.method()
+    def generate_all_masks(self, image_data: str, points_per_side: int = 32, 
+                          pred_iou_thresh: float = 0.88, 
+                          stability_score_thresh: float = 0.95) -> Dict[str, Any]:
+        """Generate all possible masks for the entire image"""
+        try:
+            logger.info("Starting automatic mask generation")
+            
+            # Clear GPU cache before processing
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                logger.info(f"GPU memory before mask generation: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
+            
+            # Ensure we have the required imports
+            import sys
+            sys.path.append('/root/sam2')
+            from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator
 
-    #         # Check if mask_generator exists, if not create it
-    #         if not hasattr(self, 'mask_generator') or self.mask_generator is None:
-    #             logger.info("Creating mask generator...")
+            # Check if mask_generator exists, if not create it
+            if not hasattr(self, 'mask_generator') or self.mask_generator is None:
+                logger.info("Creating mask generator...")
 
-    #             # Ensure sam2_model is available
-    #             if not hasattr(self, 'sam2_model') or self.sam2_model is None:
-    #                 logger.error("SAM2 model not initialized")
-    #                 # Try to initialize the model now
-    #                 try:
-    #                     logger.info("Attempting to initialize SAM2 model...")
-    #                     import sys
-    #                     sys.path.append('/root/sam2')
-    #                     from sam2.build_sam import build_sam2
-    #                     from sam2.sam2_image_predictor import SAM2ImagePredictor
+                # Ensure sam2_model is available
+                if not hasattr(self, 'sam2_model') or self.sam2_model is None:
+                    logger.error("SAM2 model not initialized")
+                    # Try to initialize the model now
+                    try:
+                        logger.info("Attempting to initialize SAM2 model...")
+                        import sys
+                        sys.path.append('/root/sam2')
+                        from sam2.build_sam import build_sam2
+                        from sam2.sam2_image_predictor import SAM2ImagePredictor
 
-    #                     # Initialize device
-    #                     self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    #                     logger.info(f"Using device: {self.device}")
+                        # Initialize device
+                        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                        logger.info(f"Using device: {self.device}")
 
-    #                     # Model configuration
-    #                     model_cfg = "sam2_hiera_l.yaml"
-    #                     sam2_checkpoint = "/root/sam2/checkpoints/sam2_hiera_large.pt"
+                        # Model configuration
+                        model_cfg = "sam2_hiera_l.yaml"
+                        sam2_checkpoint = "/root/sam2/checkpoints/sam2_hiera_large.pt"
 
-    #                     # Check if checkpoint exists
-    #                     import os
-    #                     if not os.path.exists(sam2_checkpoint):
-    #                         logger.error(f"SAM2 checkpoint not found at: {sam2_checkpoint}")
-    #                         raise FileNotFoundError(f"SAM2 checkpoint not found at: {sam2_checkpoint}")
+                        # Check if checkpoint exists
+                        import os
+                        if not os.path.exists(sam2_checkpoint):
+                            logger.error(f"SAM2 checkpoint not found at: {sam2_checkpoint}")
+                            raise FileNotFoundError(f"SAM2 checkpoint not found at: {sam2_checkpoint}")
 
-    #                     # Build SAM2 model
-    #                     logger.info("Loading SAM2 model...")
-    #                     self.sam2_model = build_sam2(model_cfg, sam2_checkpoint, device=self.device)
-    #                     logger.info("SAM2 model loaded successfully")
+                        # Build SAM2 model
+                        logger.info("Loading SAM2 model...")
+                        self.sam2_model = build_sam2(model_cfg, sam2_checkpoint, device=self.device)
+                        logger.info("SAM2 model loaded successfully")
 
-    #                     # Initialize predictor
-    #                     self.predictor = SAM2ImagePredictor(self.sam2_model)
-    #                     logger.info("SAM2 predictor initialized successfully")
+                        # Initialize predictor
+                        self.predictor = SAM2ImagePredictor(self.sam2_model)
+                        logger.info("SAM2 predictor initialized successfully")
 
-    #                 except Exception as e:
-    #                     logger.error(f"Failed to initialize SAM2 model: {str(e)}")
-    #                     raise RuntimeError(f"SAM2 model initialization failed: {str(e)}")
+                    except Exception as e:
+                        logger.error(f"Failed to initialize SAM2 model: {str(e)}")
+                        raise RuntimeError(f"SAM2 model initialization failed: {str(e)}")
 
-    #             # Use improved parameters for better coverage
-    #             self.mask_generator = SAM2AutomaticMaskGenerator(
-    #                 self.sam2_model,
-    #                 points_per_side=min(points_per_side, 64),  # Increased for better coverage
-    #                 points_per_batch=16,  # Reduced batch size for memory efficiency
-    #                 pred_iou_thresh=pred_iou_thresh,
-    #                 stability_score_thresh=stability_score_thresh,
-    #                 stability_score_offset=1.0,
-    #                 mask_threshold=0.0,
-    #                 box_nms_thresh=0.7,
-    #                 crop_n_layers=0,
-    #                 crop_nms_thresh=0.7,
-    #                 crop_overlap_ratio=512 / 1500,
-    #                 crop_n_points_downscale_factor=1,
-    #                 min_mask_region_area=5,  # Even smaller for comprehensive coverage
-    #                 output_mode="binary_mask",
-    #                 use_m2m=False,
-    #                 multimask_output=True
-    #             )
+                # Use improved parameters for better coverage
+                self.mask_generator = SAM2AutomaticMaskGenerator(
+                    self.sam2_model,
+                    points_per_side=min(points_per_side, 64),  # Increased for better coverage
+                    points_per_batch=16,  # Reduced batch size for memory efficiency
+                    pred_iou_thresh=pred_iou_thresh,
+                    stability_score_thresh=stability_score_thresh,
+                    stability_score_offset=1.0,
+                    mask_threshold=0.0,
+                    box_nms_thresh=0.7,
+                    crop_n_layers=0,
+                    crop_nms_thresh=0.7,
+                    crop_overlap_ratio=512 / 1500,
+                    crop_n_points_downscale_factor=1,
+                    min_mask_region_area=5,  # Even smaller for comprehensive coverage
+                    output_mode="binary_mask",
+                    use_m2m=False,
+                    multimask_output=True
+                )
 
-    #         # Decode image
-    #         image_array = self._decode_image(image_data)
-    #         height, width = image_array.shape[:2]
-    #         logger.info(f"Image dimensions: {width}x{height}")
+            # Decode image
+            image_array = self._decode_image(image_data)
+            height, width = image_array.shape[:2]
+            logger.info(f"Image dimensions: {width}x{height}")
 
-    #         # Update mask generator settings if different from defaults
-    #         if (points_per_side != 32 or pred_iou_thresh != 0.88 or
-    #             stability_score_thresh != 0.95):
+            # Update mask generator settings if different from defaults
+            if (points_per_side != 32 or pred_iou_thresh != 0.88 or
+                stability_score_thresh != 0.95):
 
-    #             logger.info("Updating mask generator settings")
-    #             self.mask_generator = SAM2AutomaticMaskGenerator(
-    #                 self.sam2_model,
-    #                 points_per_side=min(points_per_side, 64),  # Increased for better coverage
-    #                 points_per_batch=16,  # Reduced batch size for memory efficiency
-    #                 pred_iou_thresh=pred_iou_thresh,
-    #                 stability_score_thresh=stability_score_thresh,
-    #                 stability_score_offset=1.0,
-    #                 mask_threshold=0.0,
-    #                 box_nms_thresh=0.7,
-    #                 crop_n_layers=0,
-    #                 crop_nms_thresh=0.7,
-    #                 crop_overlap_ratio=512 / 1500,
-    #                 crop_n_points_downscale_factor=1,
-    #                 min_mask_region_area=5,  # Even smaller for comprehensive coverage
-    #                 output_mode="binary_mask",
-    #                 use_m2m=False,
-    #                 multimask_output=True
-    #             )
+                logger.info("Updating mask generator settings")
+                self.mask_generator = SAM2AutomaticMaskGenerator(
+                    self.sam2_model,
+                    points_per_side=min(points_per_side, 64),  # Increased for better coverage
+                    points_per_batch=16,  # Reduced batch size for memory efficiency
+                    pred_iou_thresh=pred_iou_thresh,
+                    stability_score_thresh=stability_score_thresh,
+                    stability_score_offset=1.0,
+                    mask_threshold=0.0,
+                    box_nms_thresh=0.7,
+                    crop_n_layers=0,
+                    crop_nms_thresh=0.7,
+                    crop_overlap_ratio=512 / 1500,
+                    crop_n_points_downscale_factor=1,
+                    min_mask_region_area=5,  # Even smaller for comprehensive coverage
+                    output_mode="binary_mask",
+                    use_m2m=False,
+                    multimask_output=True
+                )
 
-    #         # Generate masks
-    #         logger.info("Generating masks...")
-    #         masks_data = self.mask_generator.generate(image_array)
-    #         logger.info(f"Generated {len(masks_data)} raw masks")
+            # Generate masks
+            logger.info("Generating masks...")
+            masks_data = self.mask_generator.generate(image_array)
+            logger.info(f"Generated {len(masks_data)} raw masks")
 
-    #         # Clear GPU cache after generation
-    #         if torch.cuda.is_available():
-    #             torch.cuda.empty_cache()
-    #             logger.info(f"GPU memory after mask generation: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
+            # Clear GPU cache after generation
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                logger.info(f"GPU memory after mask generation: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
 
-    #         # Process and encode masks
-    #         masks = []
-    #         for i, mask_info in enumerate(masks_data):
-    #             try:
-    #                 segmentation = mask_info.get("segmentation")
-    #                 if segmentation is not None:
-    #                     # Ensure mask is numpy array
-    #                     if not isinstance(segmentation, np.ndarray):
-    #                         segmentation = np.array(segmentation)
+            # Process and encode masks
+            masks = []
+            for i, mask_info in enumerate(masks_data):
+                try:
+                    segmentation = mask_info.get("segmentation")
+                    if segmentation is not None:
+                        # Ensure mask is numpy array
+                        if not isinstance(segmentation, np.ndarray):
+                            segmentation = np.array(segmentation)
 
-    #                     # Skip very small masks
-    #                     area = int(mask_info.get("area", 0))
-    #                     if area < 10:  # Much smaller threshold for comprehensive coverage
-    #                         continue
+                        # Skip very small masks
+                        area = int(mask_info.get("area", 0))
+                        if area < 10:  # Much smaller threshold for comprehensive coverage
+                            continue
 
-    #                     # Encode mask
-    #                     mask_base64 = self._encode_mask(segmentation)
+                        # Encode mask
+                        mask_base64 = self._encode_mask(segmentation)
 
-    #                     # Get bounding box in XYWH format from SAM2
-    #                     bbox = mask_info.get("bbox")
-    #                     if bbox is not None:
-    #                         bbox = [float(x) for x in bbox]
+                        # Get bounding box in XYWH format from SAM2
+                        bbox = mask_info.get("bbox")
+                        if bbox is not None:
+                            bbox = [float(x) for x in bbox]
 
-    #                     mask_response = {
-    #                         "id": len(masks),  # Use processed count as ID
-    #                         "mask": mask_base64,
-    #                         "score": float(mask_info.get("predicted_iou", 0)),
-    #                         "bbox": bbox,
-    #                         "area": area,
-    #                         "stability_score": float(mask_info.get("stability_score", 0))
-    #                     }
+                        mask_response = {
+                            "id": len(masks),  # Use processed count as ID
+                            "mask": mask_base64,
+                            "score": float(mask_info.get("predicted_iou", 0)),
+                            "bbox": bbox,
+                            "area": area,
+                            "stability_score": float(mask_info.get("stability_score", 0))
+                        }
 
-    #                     masks.append(mask_response)
+                        masks.append(mask_response)
 
-    #                     if len(masks) % 10 == 0:
-    #                         logger.info(f"Processed {len(masks)} masks")
+                        if len(masks) % 10 == 0:
+                            logger.info(f"Processed {len(masks)} masks")
 
-    #             except Exception as mask_error:
-    #                 logger.warning(f"Error processing mask {i}: {mask_error}")
-    #                 continue
+                except Exception as mask_error:
+                    logger.warning(f"Error processing mask {i}: {mask_error}")
+                    continue
 
-    #         result = {
-    #             "masks": masks,
-    #             "total_masks": len(masks),
-    #             "width": width,
-    #             "height": height
-    #         }
+            result = {
+                "masks": masks,
+                "total_masks": len(masks),
+                "width": width,
+                "height": height
+            }
 
-    #         logger.info(f"Successfully processed {len(masks)} masks")
-    #         return result
+            logger.info(f"Successfully processed {len(masks)} masks")
+            return result
 
-    #     except Exception as e:
-    #         logger.error(f"Error in generate_all_masks: {str(e)}")
-    #         raise e
+        except Exception as e:
+            logger.error(f"Error in generate_all_masks: {str(e)}")
+            raise e
 
     @modal.method()
     def get_mask_at_point(self, image_data: str, point: List[int], all_masks: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -962,10 +961,10 @@ def create_fastapi_app():
     fastapi_app.add_middleware(
         CORSMiddleware,
         allow_origins=[
-            "https://painter-sam2.onrender.com",  # Local development
-            "https://painter-sam2.onrender.com",  # Alternative local port
-            "https://painter-sam2.onrender.com",  # HTTPS local
-            "https://painter-sam2.onrender.com",  # HTTPS alternative local
+            "http://localhost:3000",  # Local development
+            "http://localhost:3001",  # Alternative local port
+            "https://localhost:3000",  # HTTPS local
+            "https://localhost:3001",  # HTTPS alternative local
             "*"  # Allow all origins for development
         ],
         allow_credentials=True,
@@ -1047,40 +1046,39 @@ async def segment_endpoint(request: SegmentRequest):
         logger.error(f"Segmentation error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Segmentation failed: {str(e)}")
 
-# COMMENTED OUT - Generate Masks endpoint
-# @fastapi_app.post("/generate-masks", response_model=Union[GenerateMasksResponse, ErrorResponse])
-# async def generate_masks_endpoint(request: GenerateMasksRequest):
-#     """Endpoint for generating all masks for an image - GPU INTENSIVE"""
-#     try:
-#         logger.info("Received mask generation request")
-#         
-#         # Validate request
-#         if not request.image_data:
-#             raise HTTPException(status_code=400, detail="Image data is required")
-#         
-#         # Call SAM2 model
-#         sam2_model = SAM2Model()
-#         result = sam2_model.generate_all_masks.remote(
-#             image_data=request.image_data,
-#             points_per_side=request.points_per_side or 32,
-#             pred_iou_thresh=request.pred_iou_thresh or 0.88,
-#             stability_score_thresh=request.stability_score_thresh or 0.95
-#         )
-#         
-#         return GenerateMasksResponse(**result)
-#         
-#     except ValueError as e:
-#         logger.error(f"Validation error: {str(e)}")
-#         raise HTTPException(status_code=400, detail=str(e))
-#     except RuntimeError as e:
-#         logger.error(f"Runtime error: {str(e)}")
-#         raise HTTPException(status_code=500, detail=f"SAM2 model error: {str(e)}")
-#     except FileNotFoundError as e:
-#         logger.error(f"File not found error: {str(e)}")
-#         raise HTTPException(status_code=500, detail=f"Model file error: {str(e)}")
-#     except Exception as e:
-#         logger.error(f"Mask generation error: {str(e)}")
-#         raise HTTPException(status_code=500, detail=f"Mask generation failed: {str(e)}")
+@fastapi_app.post("/generate-masks", response_model=Union[GenerateMasksResponse, ErrorResponse])
+async def generate_masks_endpoint(request: GenerateMasksRequest):
+    """Endpoint for generating all masks for an image - GPU INTENSIVE"""
+    try:
+        logger.info("Received mask generation request")
+        
+        # Validate request
+        if not request.image_data:
+            raise HTTPException(status_code=400, detail="Image data is required")
+        
+        # Call SAM2 model
+        sam2_model = SAM2Model()
+        result = sam2_model.generate_all_masks.remote(
+            image_data=request.image_data,
+            points_per_side=request.points_per_side or 32,
+            pred_iou_thresh=request.pred_iou_thresh or 0.88,
+            stability_score_thresh=request.stability_score_thresh or 0.95
+        )
+        
+        return GenerateMasksResponse(**result)
+        
+    except ValueError as e:
+        logger.error(f"Validation error: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        logger.error(f"Runtime error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"SAM2 model error: {str(e)}")
+    except FileNotFoundError as e:
+        logger.error(f"File not found error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Model file error: {str(e)}")
+    except Exception as e:
+        logger.error(f"Mask generation error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Mask generation failed: {str(e)}")
 
 # Add missing cached endpoints
 @fastapi_app.post("/get-embedding", response_model=Union[GetEmbeddingResponse, ErrorResponse])
