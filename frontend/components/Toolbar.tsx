@@ -35,6 +35,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
   hasMasks,
   hasSelectedMasks,
   isClickToGenerateMode,
+  showAllMasks,
 }) => {
   const [showHelp, setShowHelp] = useState(false);
 
@@ -102,7 +103,8 @@ const Toolbar: React.FC<ToolbarProps> = ({
       )}
 
       <div className="space-y-3">
-        {/* Generate All Masks Button */}
+        {/* Generate All Masks Button - COMMENTED OUT */}
+        {/* 
         <motion.button
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.98 }}
@@ -125,6 +127,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
             </>
           )}
         </motion.button>
+        */}
 
         {/* Generate Advanced Masks Button */}
         <motion.button
@@ -145,7 +148,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
           ) : (
             <>
               <Sparkles className="w-4 h-4" />
-              <span>Generate Max Coverage</span>
+              <span>Generate Masks</span>
             </>
           )}
         </motion.button>
@@ -235,8 +238,8 @@ const Toolbar: React.FC<ToolbarProps> = ({
             }
           `}
         >
-          <Eye className="w-3 h-3" />
-          <span>Toggle All Masks</span>
+          {showAllMasks ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+          <span>{showAllMasks ? 'Hide All Masks' : 'Show All Masks'}</span>
         </motion.button>
 
         {/* Reset Button */}
@@ -289,4 +292,4 @@ const Toolbar: React.FC<ToolbarProps> = ({
   );
 };
 
-export default Toolbar; 
+export default Toolbar;

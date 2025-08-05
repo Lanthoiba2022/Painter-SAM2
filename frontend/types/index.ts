@@ -160,6 +160,7 @@ export interface ToolbarProps {
   hasMasks: boolean;
   hasSelectedMasks: boolean;
   isClickToGenerateMode: boolean;
+  showAllMasks: boolean;
 }
 
 export interface UploadZoneProps {

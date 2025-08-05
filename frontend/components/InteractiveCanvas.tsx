@@ -39,7 +39,9 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
   const getCachedMasks = useAppStore((state) => state.getCachedMasks);
 
   // Debug function to toggle hover
-  const toggleHover = useCallback(() => {
+  const toggleHover = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
     setIsHoverEnabled(!isHoverEnabled);
     console.log(`Hover ${isHoverEnabled ? 'disabled' : 'enabled'}`);
   }, [isHoverEnabled]);
@@ -545,7 +547,7 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
       
       {/* Cache Status Indicator */}
       {(isEmbeddingCached || isMaskCached) && (
-        <div className="absolute top-6 right-6 bg-gradient-to-r from-blue-500 to-blue-600 text-white px-4 py-2 rounded-xl shadow-xl backdrop-blur-sm border border-blue-400/20">
+        <div className="absolute top-6 right-6 bg-gradient-to-r from-blue-500 to-blue-600 text-white px-4 py-2 rounded-xl shadow-xl backdrop-blur-sm border border-blue-400/20 z-10">
           <div className="flex items-center space-x-2">
             <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
             <span className="text-sm font-medium">
@@ -556,18 +558,26 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
       )}
       
       {/* Debug Hover Toggle */}
-      <div className="absolute top-6 left-6 bg-gradient-to-r from-yellow-500 to-orange-600 text-white px-4 py-2 rounded-xl shadow-xl backdrop-blur-sm border border-yellow-400/20">
-        <button
-          onClick={toggleHover}
-          className="text-sm font-medium"
-        >
+      <div 
+        className="absolute top-6 left-6 bg-gradient-to-r from-yellow-500 to-orange-600 text-white px-4 py-2 rounded-xl shadow-xl backdrop-blur-sm border border-yellow-400/20 z-10 cursor-pointer select-none"
+        onClick={toggleHover}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            toggleHover(e as any);
+          }
+        }}
+      >
+        <span className="text-sm font-medium">
           Hover: {isHoverEnabled ? 'ON' : 'OFF'}
-        </button>
+        </span>
       </div>
       
       {/* Click Mode Indicator */}
       {isClickToGenerateMode && (
-        <div className="absolute top-6 left-6 bg-gradient-to-r from-green-500 to-green-600 text-white px-4 py-3 rounded-xl shadow-xl backdrop-blur-sm border border-green-400/20">
+        <div className="absolute top-6 left-32 bg-gradient-to-r from-green-500 to-green-600 text-white px-4 py-3 rounded-xl shadow-xl backdrop-blur-sm border border-green-400/20 z-10">
           <div className="flex items-center space-x-3">
             <div className="w-8 h-8 bg-white/20 rounded-full flex items-center justify-center">
               <MousePointer className="w-4 h-4" />

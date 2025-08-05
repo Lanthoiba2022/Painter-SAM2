@@ -23,13 +23,16 @@ const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({
   return (
     <div className="flex items-center justify-center space-x-2">
       <motion.div
-        className={`${sizeClasses[size]} ${color} animate-spin`}
-        style={{
-          border: '2px solid currentColor',
-          borderTop: '2px solid transparent',
-          borderRadius: '50%'
-        }}
-      />
+        className={`${sizeClasses[size]} rounded-lg overflow-hidden`}
+        animate={{ rotate: 360 }}
+        transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+      >
+        <img 
+          src="/color-palette.png" 
+          alt="Color Palette" 
+          className="w-full h-full object-cover"
+        />
+      </motion.div>
       {text && (
         <span className="text-sm text-gray-600">{text}</span>
       )}

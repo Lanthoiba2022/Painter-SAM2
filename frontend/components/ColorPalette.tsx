@@ -6,30 +6,30 @@ import { ColorPaletteProps } from '@/types';
 import { Palette } from 'lucide-react';
 
 const defaultColors = [
-  '#FF6B6B', // Red
-  '#4ECDC4', // Teal
-  '#45B7D1', // Blue
-  '#96CEB4', // Green
-  '#FFEAA7', // Yellow
-  '#DDA0DD', // Plum
-  '#98D8C8', // Mint
-  '#F7DC6F', // Gold
-  '#BB8FCE', // Purple
-  '#85C1E9', // Sky Blue
-  '#F8C471', // Orange
-  '#82E0AA', // Light Green
-  '#F1948A', // Salmon
-  '#85C1E9', // Light Blue
-  '#FAD7A0', // Peach
-  '#D7BDE2', // Lavender
-  '#A9DFBF', // Mint Green
-  '#F9E79F', // Light Yellow
-  '#F5B7B1', // Pink
-  '#AED6F1', // Baby Blue
-  '#ABEBC6', // Light Mint
-  '#FDEBD0', // Cream
-  '#E8DAEF', // Light Purple
-  '#D5F4E6', // Very Light Green
+  '#FF0000', // Bright Red
+  '#00FF00', // Bright Green
+  '#0000FF', // Bright Blue
+  '#FFFF00', // Bright Yellow
+  '#FF00FF', // Magenta
+  '#00FFFF', // Cyan
+  '#FF8000', // Orange
+  '#8000FF', // Purple
+  '#FF0080', // Pink
+  '#0080FF', // Sky Blue
+  '#80FF00', // Lime Green
+  '#FF8000', // Dark Orange
+  '#800080', // Dark Purple
+  '#008080', // Teal
+  '#FF4000', // Red Orange
+  '#4000FF', // Indigo
+  '#FF0040', // Hot Pink
+  '#40FF00', // Bright Lime
+  '#0040FF', // Royal Blue
+  '#FF4000', // Coral
+  '#400080', // Deep Purple
+  '#804000', // Brown
+  '#408000', // Forest Green
+  '#800040', // Burgundy
 ];
 
 const ColorPalette: React.FC<ColorPaletteProps> = ({

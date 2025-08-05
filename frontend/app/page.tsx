@@ -557,8 +557,12 @@ export default function HomePage() {
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
         <div className="flex items-center justify-center h-screen">
           <div className="text-center">
-            <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-xl">
-              <span className="text-white font-bold text-xl">S2</span>
+            <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-xl overflow-hidden">
+              <img 
+                src="/color-palette.png" 
+                alt="Color Palette" 
+                className="w-full h-full object-cover"
+              />
             </div>
             <p className="text-gray-500 font-medium">Loading...</p>
           </div>
@@ -574,20 +578,19 @@ export default function HomePage() {
         <div className="max-w-7xl mx-auto px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl flex items-center justify-center shadow-lg">
-                <span className="text-white font-bold text-sm">S2</span>
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center shadow-lg overflow-hidden">
+                <img 
+                  src="/color-palette.png" 
+                  alt="Color Palette" 
+                  className="w-full h-full object-cover"
+                />
               </div>
               <h1 className="text-xl font-bold text-gray-900">
               SAM2 Building Painter
               </h1>
             </div>
             <div className="text-sm text-gray-500 font-medium">
-              {isEmbeddingCached && isMaskCached && (
-                <span className="flex items-center space-x-2">
-                  <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                  <span>Cached</span>
-                </span>
-              )}
+              {/* Removed cached indicator from header to reduce redundancy */}
             </div>
           </div>
         </div>
@@ -633,6 +636,7 @@ export default function HomePage() {
                 hasSelectedMasks={selectedMasks.size > 0}
                 isClickToGenerateMode={isClickToGenerateMode}
                 isGeneratingAdvancedMasks={isGeneratingAdvancedMasks}
+                showAllMasks={showAllMasks}
               />
             </ClientOnly>
             
@@ -658,10 +662,11 @@ export default function HomePage() {
             >
               <ColorPalette
                 colors={[
-                  '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD',
-                  '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E9', '#F8C471', '#82E0AA',
-                  '#F1948A', '#85C1E9', '#FAD7A0', '#D7BDE2', '#A9DFBF', '#F9E79F',
-                  '#F5B7B1', '#AED6F1', '#ABEBC6', '#FDEBD0', '#E8DAEF', '#D5F4E6'
+                  '#FF0000', '#00FF00', '#0000FF', '#FFFF00', '#FF00FF',
+                  '#00FFFF', '#FF8000', '#8000FF', '#FF0080', '#0080FF',
+                  '#80FF00', '#FF8000', '#800080', '#008080', '#FF4000',
+                  '#4000FF', '#FF0040', '#40FF00', '#0040FF', '#FF4000',
+                  '#400080', '#804000', '#408000', '#800040'
                 ]}
                 selectedColor={currentColor}
                 onColorSelect={handleColorSelect}
@@ -678,8 +683,12 @@ export default function HomePage() {
                 className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl border border-gray-200/50 p-12"
               >
                 <div className="text-center max-w-4xl mx-auto">
-                  <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-xl">
-                    <span className="text-white font-bold text-xl">S2</span>
+                  <div className="w-20 h-20 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-xl overflow-hidden">
+                    <img 
+                      src="/color-palette.png" 
+                      alt="Color Palette" 
+                      className="w-full h-full object-cover"
+                    />
                   </div>
                   <h2 className="text-3xl font-bold text-gray-900 mb-4">
                     Welcome to SAM2 Building Painter
@@ -701,8 +710,12 @@ export default function HomePage() {
                 <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl border border-gray-200/50 p-6">
                   <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center space-x-3">
-                      <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-                        <span className="text-white font-bold text-xs">S2</span>
+                      <div className="w-8 h-8 rounded-lg flex items-center justify-center overflow-hidden">
+                        <img 
+                          src="/color-palette.png" 
+                          alt="Color Palette" 
+                          className="w-full h-full object-cover"
+                        />
                       </div>
                       <h3 className="text-xl font-bold text-gray-900">
                         Image Preview
@@ -727,12 +740,7 @@ export default function HomePage() {
                           <span>{coloredMasks.length} colored</span>
                         </div>
                       )}
-                      {(isEmbeddingCached || isMaskCached) && (
-                        <div className="flex items-center space-x-2">
-                          <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                          <span>Cached</span>
-                        </div>
-                      )}
+                      {/* Removed cached indicator from image preview to reduce redundancy */}
                     </div>
                   </div>
                   <div className="w-full h-[600px] lg:h-[700px] xl:h-[750px] relative">
