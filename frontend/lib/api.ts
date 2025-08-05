@@ -148,7 +148,7 @@ export const api = {
       stability_score_thresh: stabilityScoreThresh,
     };
 
-    const response = await apiClient.post('/generate-masks-cached', payload, {
+    const response = await apiClient.post('/generate-masks', payload, {
       timeout: 300000, // 5 minutes for mask generation
     });
 
