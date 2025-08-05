@@ -40,17 +40,21 @@ app = FastAPI(
 # CORS middleware with increased request size for large file uploads
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:3000",  # Local development
+        "https://painter-sam-2.vercel.app/",  # Replace with your actual frontend domain
+        "*"  # Allow all origins for now (you can restrict this later)
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # Configuration
-UPLOAD_DIR = "uploads"
-MASKS_DIR = "masks"
-RESULTS_DIR = "results"
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "uploads")
+MASKS_DIR = os.environ.get("MASKS_DIR", "masks")
+RESULTS_DIR = os.environ.get("RESULTS_DIR", "results")
+MAX_FILE_SIZE = int(os.environ.get("MAX_FILE_SIZE", 50 * 1024 * 1024))  # 50MB
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff"}
 
 # Create directories
@@ -1858,4 +1862,6 @@ async def get_cache_status():
         raise HTTPException(status_code=500, detail=f"Failed to get cache status: {str(e)}")
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    port = int(os.environ.get("PORT", 8000))
+    host = os.environ.get("HOST", "0.0.0.0")
+    uvicorn.run(app, host=host, port=port)
