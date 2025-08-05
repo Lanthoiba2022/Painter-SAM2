@@ -1,7 +1,12 @@
 import type { Metadata, Viewport } from 'next';
 import { Inter } from 'next/font/google';
 import './globals.css';
-import { Toaster } from 'react-hot-toast';
+import dynamic from 'next/dynamic';
+
+// Dynamically import Toaster to prevent hydration issues
+const Toaster = dynamic(() => import('react-hot-toast').then(mod => ({ default: mod.Toaster })), {
+  ssr: false,
+});
 
 const inter = Inter({ subsets: ['latin'] });
 

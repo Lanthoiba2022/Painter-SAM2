@@ -89,13 +89,32 @@ const MaskGallery: React.FC<MaskGalleryProps> = ({
 
               {/* Mask thumbnail */}
               <div className="relative w-full h-40 bg-gray-100 overflow-hidden">
-                <img
-                  src={`data:image/png;base64,${mask.mask}`}
-                  alt={`Mask ${index + 1}`}
-                  className={`w-full h-full object-cover transition-all duration-200 ${
-                    isHoveredFromCanvas ? 'opacity-90 scale-110' : 'opacity-80'
-                  }`}
-                />
+                <div 
+                  className="w-full h-full"
+                  style={{
+                    backgroundImage: `
+                      linear-gradient(45deg, #9ca3af 25%, transparent 25%), 
+                      linear-gradient(-45deg, #9ca3af 25%, transparent 25%), 
+                      linear-gradient(45deg, transparent 75%, #9ca3af 75%), 
+                      linear-gradient(-45deg, transparent 75%, #9ca3af 75%)
+                    `,
+                    backgroundSize: '12px 12px',
+                    backgroundPosition: '0 0, 0 6px, 6px -6px, -6px 0px'
+                  }}
+                >
+                  <img
+                    src={`data:image/png;base64,${mask.mask}`}
+                    alt={`Mask ${index + 1}`}
+                    className={`w-full h-full object-cover transition-all duration-200 ${
+                      isHoveredFromCanvas ? 'opacity-90 scale-110' : 'opacity-80'
+                    }`}
+                    style={{
+                      filter: 'brightness(0) saturate(100%) invert(27%) sepia(51%) saturate(2878%) hue-rotate(346deg) brightness(104%) contrast(97%)',
+                      mixBlendMode: 'multiply',
+                      backgroundColor: 'transparent'
+                    }}
+                  />
+                </div>
                 
                 {/* Selection indicator */}
                 {isSelected && (

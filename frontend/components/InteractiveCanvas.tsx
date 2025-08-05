@@ -38,6 +38,12 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
   const setMaskCache = useAppStore((state) => state.setMaskCache);
   const getCachedMasks = useAppStore((state) => state.getCachedMasks);
 
+  // Debug function to toggle hover
+  const toggleHover = useCallback(() => {
+    setIsHoverEnabled(!isHoverEnabled);
+    console.log(`Hover ${isHoverEnabled ? 'disabled' : 'enabled'}`);
+  }, [isHoverEnabled]);
+
   // Load image and calculate canvas size
   useEffect(() => {
     if (imageData) {
@@ -122,8 +128,9 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
         const green = data[pixelIndex + 1];
         const blue = data[pixelIndex + 2];
         
-        // Check if pixel is part of mask
-        if (alpha > 0 || red > 0 || green > 0 || blue > 0) {
+        // Check if pixel is part of mask (white pixels in RGBA format)
+        // For transparent background masks, we check for white pixels (RGB > 0)
+        if (red > 0 || green > 0 || blue > 0) {
           pixelSet.add(`${x},${y}`);
         }
       }
@@ -153,12 +160,12 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
       }
       
       const pixelIndex = (y * imageElement.width + x) * 4;
-      const alpha = maskData.data[pixelIndex + 3];
       const red = maskData.data[pixelIndex];
       const green = maskData.data[pixelIndex + 1];
       const blue = maskData.data[pixelIndex + 2];
       
-      return alpha > 0 || red > 0 || green > 0 || blue > 0;
+      // For transparent background masks, check for white pixels (RGB > 0)
+      return red > 0 || green > 0 || blue > 0;
     } catch (error) {
       console.error(`Error checking point in mask ${maskId}:`, error);
       return false;
@@ -168,7 +175,6 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
   // Pre-load mask images with enhanced caching for instant hover
   useEffect(() => {
     if (masks.length > 0 && imageElement) {
-      console.log(`Loading ${masks.length} mask images with enhanced caching...`);
       const newLoadedImages: Record<number, HTMLImageElement> = {};
       const newMaskDataCache: Record<number, ImageData> = {};
       const newMaskPixelCache: Record<number, Set<string>> = {};
@@ -194,7 +200,6 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
               newMaskPixelCache[mask.id] = pixelSet;
             }
             
-            console.log(`Loaded mask ${mask.id} with pixel cache`);
             resolve();
           };
           img.onerror = () => {
@@ -206,7 +211,6 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
       });
 
       Promise.all(loadPromises).then(() => {
-        console.log(`Successfully loaded ${Object.keys(newLoadedImages).length} mask images with pixel caching`);
         setLoadedMaskImages(newLoadedImages);
         setMaskDataCache(newMaskDataCache);
         setMaskPixelCache(newMaskPixelCache);
@@ -229,7 +233,6 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
     if (currentImageHash && !masks.length) {
       const cachedMasks = getCachedMasks(currentImageHash);
       if (cachedMasks && cachedMasks.length > 0) {
-        console.log(`Loading ${cachedMasks.length} cached masks for image ${currentImageHash}`);
         // The store will handle setting the masks
       }
     }
@@ -250,14 +253,16 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
     if (!imageElement || masks.length === 0) return null;
     
     return (x: number, y: number) => {
+      // Check all masks in order
       for (const mask of masks) {
         if (isPointInMask(mask.id, x, y)) {
           return mask;
         }
       }
+      
       return null;
     };
-  }, [masks, isPointInMask, imageElement]);
+  }, [masks, isPointInMask, imageElement, maskPixelCache]);
 
   // Draw function with optimized mask rendering
   const drawCanvas = useCallback(() => {
@@ -305,7 +310,7 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
       // Get mask data
       const maskData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
       
-      // Create colored overlay only where mask is white
+      // Create colored overlay only where mask is white (RGBA format)
       const coloredOverlay = document.createElement('canvas');
       const overlayCtx = coloredOverlay.getContext('2d');
       if (!overlayCtx) return;
@@ -320,7 +325,12 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
       // Apply mask to color overlay
       const overlayData = overlayCtx.getImageData(0, 0, imageElement.width, imageElement.height);
       for (let i = 0; i < maskData.data.length; i += 4) {
-        const maskValue = maskData.data[i]; // Use red channel as mask
+        const red = maskData.data[i];
+        const green = maskData.data[i + 1];
+        const blue = maskData.data[i + 2];
+        
+        // Check for white pixels in RGBA format (transparent background)
+        const maskValue = Math.max(red, green, blue);
         const alpha = maskValue / 255 * opacity;
         overlayData.data[i + 3] = Math.round(overlayData.data[i + 3] * alpha); // Set alpha
       }
@@ -375,6 +385,13 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
   useEffect(() => {
     drawCanvas();
   }, [drawCanvas]);
+  
+  // Force redraw when hover state changes
+  useEffect(() => {
+    if (hoveredMaskId !== null) {
+      drawCanvas();
+    }
+  }, [hoveredMaskId, drawCanvas]);
 
   // Utility: Generate unique colors for masks
   const getUniqueColor = (index: number): string => {
@@ -409,14 +426,20 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
       const maskAtCurrentPoint = maskAtPoint(imageCoords.x, imageCoords.y);
       
       if (maskAtCurrentPoint) {
-        setHoveredMaskId(maskAtCurrentPoint.id);
+        if (hoveredMaskId !== maskAtCurrentPoint.id) {
+          setHoveredMaskId(maskAtCurrentPoint.id);
+        }
       } else {
-        setHoveredMaskId(null);
+        if (hoveredMaskId !== null) {
+          setHoveredMaskId(null);
+        }
       }
     } else {
-      setHoveredMaskId(null);
+      if (hoveredMaskId !== null) {
+        setHoveredMaskId(null);
+      }
     }
-  }, [imageElement, maskAtPoint, canvasToImageCoords, setHoveredMaskId, isHoverEnabled]);
+  }, [imageElement, maskAtPoint, canvasToImageCoords, setHoveredMaskId, isHoverEnabled, hoveredMaskId]);
 
   // Handle mouse leave to clear hover
   const handleMouseLeave = useCallback(() => {
@@ -531,6 +554,16 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
           </div>
         </div>
       )}
+      
+      {/* Debug Hover Toggle */}
+      <div className="absolute top-6 left-6 bg-gradient-to-r from-yellow-500 to-orange-600 text-white px-4 py-2 rounded-xl shadow-xl backdrop-blur-sm border border-yellow-400/20">
+        <button
+          onClick={toggleHover}
+          className="text-sm font-medium"
+        >
+          Hover: {isHoverEnabled ? 'ON' : 'OFF'}
+        </button>
+      </div>
       
       {/* Click Mode Indicator */}
       {isClickToGenerateMode && (

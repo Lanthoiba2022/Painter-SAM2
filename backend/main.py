@@ -245,10 +245,20 @@ def base64_to_image(base64_str: str) -> Image.Image:
     return Image.open(io.BytesIO(image_data))
 
 def mask_to_base64(mask_array: np.ndarray) -> str:
-    """Convert numpy mask array to base64 string"""
+    """Convert numpy mask array to base64 string with transparent background like original SAM demo"""
     # Ensure mask is binary (0 or 1)
     mask_binary = (mask_array > 0).astype(np.uint8) * 255
-    mask_image = Image.fromarray(mask_binary, mode='L')
+    
+    # Create RGBA image with transparent background (like original SAM demo)
+    # White mask on transparent background
+    rgba_mask = np.zeros((mask_binary.shape[0], mask_binary.shape[1], 4), dtype=np.uint8)
+    rgba_mask[:, :, 0] = mask_binary  # Red channel
+    rgba_mask[:, :, 1] = mask_binary  # Green channel  
+    rgba_mask[:, :, 2] = mask_binary  # Blue channel
+    rgba_mask[:, :, 3] = mask_binary  # Alpha channel (transparency)
+    
+    # Create PIL image with RGBA mode for transparency
+    mask_image = Image.fromarray(rgba_mask, mode='RGBA')
     buffer = io.BytesIO()
     mask_image.save(buffer, format='PNG')
     return base64.b64encode(buffer.getvalue()).decode()
@@ -256,7 +266,13 @@ def mask_to_base64(mask_array: np.ndarray) -> str:
 def base64_to_mask(base64_str: str) -> np.ndarray:
     """Convert base64 string to numpy mask array"""
     mask_data = base64.b64decode(base64_str)
-    mask_image = Image.open(io.BytesIO(mask_data)).convert('L')
+    mask_image = Image.open(io.BytesIO(mask_data))
+    
+    # Handle both RGBA and L modes
+    if mask_image.mode == 'RGBA':
+        # For RGBA masks, convert to grayscale and then to binary
+        mask_image = mask_image.convert('L')
+    
     return np.array(mask_image) > 0
 
 def save_image_to_disk(image_data: str, filename: str, format: str = "PNG", quality: int = 95) -> str:
@@ -618,14 +634,20 @@ class SAM2Service:
         """Decode base64 mask to numpy array"""
         try:
             mask_data = base64.b64decode(base64_mask)
-            mask_image = Image.open(io.BytesIO(mask_data)).convert('L')
+            mask_image = Image.open(io.BytesIO(mask_data))
+            
+            # Handle both RGBA and L modes
+            if mask_image.mode == 'RGBA':
+                # For RGBA masks, convert to grayscale and then to binary
+                mask_image = mask_image.convert('L')
+            
             return np.array(mask_image) > 0
         except Exception as e:
             logger.error(f"Error decoding mask: {str(e)}")
             raise ValueError(f"Failed to decode mask: {str(e)}")
     
     def _encode_mask(self, mask: np.ndarray) -> str:
-        """Encode mask to base64 string"""
+        """Encode mask to base64 string with transparent background like original SAM demo"""
         try:
             # Ensure mask is boolean and convert to uint8
             if mask.dtype == bool:
@@ -633,8 +655,16 @@ class SAM2Service:
             else:
                 mask_img = (mask > 0).astype(np.uint8) * 255
             
-            # Create PIL image
-            mask_pil = Image.fromarray(mask_img, mode='L')
+            # Create RGBA image with transparent background (like original SAM demo)
+            # White mask on transparent background
+            rgba_mask = np.zeros((mask_img.shape[0], mask_img.shape[1], 4), dtype=np.uint8)
+            rgba_mask[:, :, 0] = mask_img  # Red channel
+            rgba_mask[:, :, 1] = mask_img  # Green channel  
+            rgba_mask[:, :, 2] = mask_img  # Blue channel
+            rgba_mask[:, :, 3] = mask_img  # Alpha channel (transparency)
+            
+            # Create PIL image with RGBA mode for transparency
+            mask_pil = Image.fromarray(rgba_mask, mode='RGBA')
             
             # Convert to base64
             buffer = io.BytesIO()
@@ -1532,9 +1562,9 @@ async def start_cleanup():
 # Add new endpoints for embedding caching and instant mask operations
 @app.post("/get-embedding")
 async def get_image_embedding(request: dict):
-    session_id = request.get("session_id")
     """Get image embedding with caching support"""
     try:
+        session_id = request.get("session_id")
         if session_id not in sessions:
             raise HTTPException(status_code=404, detail="Session not found")
         
@@ -1544,15 +1574,29 @@ async def get_image_embedding(request: dict):
         if not image_data:
             raise HTTPException(status_code=400, detail="No image data found in session")
         
-        # For now, return a placeholder embedding
+        # Generate a real embedding hash based on image content
         # In a real implementation, this would call the SAM2 encoder
-        embedding = f"embedding_{session_id}_{hash(image_data) % 1000000}"
+        # For now, we'll create a hash based on image data for caching
+        import hashlib
+        image_hash = hashlib.md5(image_data.encode()).hexdigest()
+        
+        # Store embedding in session cache
+        if 'embedding_cache' not in sessions[session_id]:
+            sessions[session_id]['embedding_cache'] = {}
+        
+        sessions[session_id]['embedding_cache'][image_hash] = {
+            'embedding': image_hash,  # In real implementation, this would be the actual embedding
+            'timestamp': datetime.now(),
+            'image_data': image_data,
+            'width': session_data['width'],
+            'height': session_data['height']
+        }
         
         return {
             "session_id": session_id,
-            "embedding": embedding,
-            "cached": True,  # Indicate this is from cache
-            "message": "Embedding retrieved successfully"
+            "embedding": image_hash,
+            "cached": True,
+            "message": "Embedding generated and cached successfully"
         }
         
     except HTTPException:
@@ -1579,17 +1623,19 @@ async def generate_masks_with_cache(request: GenerateMasksRequest):
         session_data = sessions[session_id]
         
         # Check if we have cached masks for this image hash
-        if image_hash and image_hash in session_data.get('mask_cache', {}):
+        if image_hash and 'mask_cache' in session_data and image_hash in session_data['mask_cache']:
             cached_masks = session_data['mask_cache'][image_hash]
-            logger.info(f"Returning cached masks for image hash: {image_hash}")
-            return {
-                "session_id": session_id,
-                "masks": cached_masks['masks'],
-                "total_masks": len(cached_masks['masks']),
-                "width": session_data['width'],
-                "height": session_data['height'],
-                "cached": True
-            }
+            # Check if cache is still valid (24 hours)
+            if (datetime.now() - cached_masks['timestamp']).total_seconds() < 24 * 60 * 60:
+                logger.info(f"Returning cached masks for image hash: {image_hash}")
+                return {
+                    "session_id": session_id,
+                    "masks": cached_masks['masks'],
+                    "total_masks": len(cached_masks['masks']),
+                    "width": session_data['width'],
+                    "height": session_data['height'],
+                    "cached": True
+                }
         
         # Call SAM2 service with improved parameters
         result = await sam2_service.generate_all_masks(
@@ -1667,7 +1713,7 @@ async def get_mask_at_point_instant(request: GetMaskAtPointRequest):
         
         # Check if we have cached masks for instant lookup
         image_hash = getattr(request, 'image_hash', None)
-        if image_hash and image_hash in session_data.get('mask_cache', {}):
+        if image_hash and 'mask_cache' in session_data and image_hash in session_data['mask_cache']:
             cached_masks = session_data['mask_cache'][image_hash]['masks']
             logger.info(f"Using cached masks for instant lookup: {len(cached_masks)} masks")
             
@@ -1676,13 +1722,21 @@ async def get_mask_at_point_instant(request: GetMaskAtPointRequest):
             best_score = 0
             
             for mask in cached_masks:
-                # Simple point-in-mask check (in a real implementation, this would be more sophisticated)
+                # Check if point is within mask bounds
                 if mask.bbox:
                     bbox = mask.bbox
                     if x >= bbox[0] and x <= bbox[2] and y >= bbox[1] and y <= bbox[3]:
-                        if mask.score and mask.score > best_score:
-                            best_mask = mask
-                            best_score = mask.score
+                        # Simple point-in-mask check using mask data
+                        try:
+                            mask_array = base64_to_mask(mask.mask)
+                            if 0 <= y < mask_array.shape[0] and 0 <= x < mask_array.shape[1]:
+                                if mask_array[y, x]:
+                                    if mask.score and mask.score > best_score:
+                                        best_mask = mask
+                                        best_score = mask.score
+                        except Exception as e:
+                            logger.warning(f"Error checking mask {mask.id}: {e}")
+                            continue
             
             if best_mask:
                 return {
@@ -1730,7 +1784,7 @@ async def generate_mask_at_point_cached(request: GenerateMaskAtPointRequest):
         image_hash = getattr(request, 'image_hash', None)
         cached = False
         
-        if image_hash and image_hash in session_data.get('embedding_cache', {}):
+        if image_hash and 'embedding_cache' in session_data and image_hash in session_data['embedding_cache']:
             cached = True
             logger.info(f"Using cached embedding for point generation: {image_hash}")
         

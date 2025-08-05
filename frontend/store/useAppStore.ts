@@ -79,14 +79,15 @@ interface AppStore extends AppState {
 
 // Utility function to generate image hash
 const generateImageHash = (imageData: string): string => {
-  // Simple hash function for image data
+  // Create a more robust hash based on image data
   let hash = 0;
-  for (let i = 0; i < imageData.length; i++) {
-    const char = imageData.charCodeAt(i);
+  const str = imageData.substring(0, 1000); // Use first 1000 chars for performance
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
     hash = ((hash << 5) - hash) + char;
     hash = hash & hash; // Convert to 32-bit integer
   }
-  return hash.toString(36);
+  return Math.abs(hash).toString(36);
 };
 
 const initialState: AppState = {
@@ -153,6 +154,14 @@ export const useAppStore = create<AppStore>()(
             false,
             'setImageData'
           );
+          
+          // Auto-load cached masks if available
+          if (isMaskCached && maskCache[imageHash]) {
+            const cachedMasks = maskCache[imageHash].masks;
+            if (cachedMasks && cachedMasks.length > 0) {
+              set({ masks: cachedMasks }, false, 'loadCachedMasks');
+            }
+          }
         },
 
         // Loading states
@@ -382,16 +391,20 @@ export const useAppStore = create<AppStore>()(
         },
 
         // Reset functions
-        reset: () => set({ 
-          ...initialState, 
-          hoveredMaskId: null, 
-          isClickToGenerateMode: false,
-          embeddingCache: {},
-          maskCache: {},
-          currentImageHash: null,
-          isEmbeddingCached: false,
-          isMaskCached: false,
-        }, false, 'reset'),
+        reset: () => {
+          // Clear all cached data including persisted cache
+          localStorage.removeItem('sam2-building-painter-store');
+          set({ 
+            ...initialState, 
+            hoveredMaskId: null, 
+            isClickToGenerateMode: false,
+            embeddingCache: {},
+            maskCache: {},
+            currentImageHash: null,
+            isEmbeddingCached: false,
+            isMaskCached: false,
+          }, false, 'reset');
+        },
 
         resetImage: () =>
           set(

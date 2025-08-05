@@ -3,16 +3,39 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
+import dynamic from 'next/dynamic';
 import UploadZone from '@/components/UploadZone';
-import InteractiveCanvas from '@/components/InteractiveCanvas';
 import MaskGallery from '@/components/MaskGallery';
 import ColorPalette from '@/components/ColorPalette';
 import Toolbar from '@/components/Toolbar';
 import { useAppStore } from '@/store/useAppStore';
 import { api, handleApiError } from '@/lib/api';
 import { MaskInfo, ColoredMask } from '@/types';
+import ClientOnly from '@/components/ClientOnly';
+
+// Dynamically import InteractiveCanvas to prevent hydration issues
+const InteractiveCanvas = dynamic(() => import('@/components/InteractiveCanvas'), {
+  ssr: false,
+  loading: () => (
+    <div className="flex items-center justify-center w-full h-full min-h-[600px] bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl border-2 border-dashed border-gray-300">
+      <div className="text-center">
+        <div className="w-16 h-16 bg-gray-200 rounded-full flex items-center justify-center mx-auto mb-4">
+          <div className="w-8 h-8 bg-gray-400 rounded-full animate-pulse"></div>
+        </div>
+        <p className="text-gray-500 font-medium">Loading canvas...</p>
+      </div>
+    </div>
+  ),
+});
 
 export default function HomePage() {
+  // Use ClientOnly to prevent hydration issues with Zustand store
+  const [isClient, setIsClient] = useState(false);
+  
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
+  
   const {
     // State
     sessionId,
@@ -68,6 +91,40 @@ export default function HomePage() {
 
   const [isUploading, setIsUploading] = useState(false);
 
+  // Clear cache on page refresh
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      // Clear cache when page is refreshed
+      localStorage.removeItem('sam2-building-painter-store');
+    };
+
+    // Clear cache on initial load to ensure fresh start
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('sam2-building-painter-store');
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, []);
+
+  // Auto-load cached masks when image hash changes
+  useEffect(() => {
+    if (currentImageHash && !masks.length) {
+      const cachedMasks = getCachedMasks(currentImageHash);
+      if (cachedMasks && cachedMasks.length > 0) {
+        console.log(`Loading ${cachedMasks.length} cached masks for image ${currentImageHash}`);
+        setMasks(cachedMasks);
+        setIsMaskCached(true);
+        toast.success(`Loaded ${cachedMasks.length} cached masks!`, { 
+          id: 'cached-masks',
+          duration: 3000 
+        });
+      }
+    }
+  }, [currentImageHash, masks.length, getCachedMasks, setMasks, setIsMaskCached]);
+
   // Handle image upload with caching
   const handleImageUpload = useCallback(async (file: File) => {
     try {
@@ -91,6 +148,17 @@ export default function HomePage() {
       setImageData(response.image_data, response.width, response.height, file.name);
       
       toast.success('Image uploaded successfully!', { id: 'upload' });
+      
+      // Generate embedding immediately after upload
+      try {
+        toast.loading('Generating image embedding...', { id: 'embedding' });
+        const embeddingResponse = await api.getImageEmbedding(response.session_id);
+        setIsEmbeddingCached(true);
+        toast.success('Image embedding cached!', { id: 'embedding' });
+      } catch (embeddingError) {
+        console.warn('Failed to generate embedding:', embeddingError);
+        // Don't fail the upload if embedding fails
+      }
       
       // Check for cached masks and embeddings
       if (currentImageHash) {
@@ -119,7 +187,7 @@ export default function HomePage() {
     } finally {
       setIsUploading(false);
     }
-  }, [setSessionId, setImageData, setError, currentImageHash, getCachedMasks, setMasks, setIsMaskCached, masks.length]);
+  }, [setSessionId, setImageData, setError, currentImageHash, getCachedMasks, setMasks, setIsMaskCached, setIsEmbeddingCached, masks.length]);
 
   // Generate masks with caching
   const handleGenerateMasks = useCallback(async () => {
@@ -441,7 +509,17 @@ export default function HomePage() {
   }, [sessionId, paintedImage, coloredMasks, setDownloading]);
 
   // Reset everything
-  const handleReset = useCallback(() => {
+  const handleReset = useCallback(async () => {
+    // Clear all cached data
+    localStorage.removeItem('sam2-building-painter-store');
+    
+    // Clear backend cache as well
+    try {
+      await api.clearCache();
+    } catch (error) {
+      console.warn('Failed to clear backend cache:', error);
+    }
+    
     reset();
     toast.success('Application reset successfully!');
   }, [reset]);
@@ -472,6 +550,22 @@ export default function HomePage() {
   const handleMaskHover = useCallback((maskId: number | null) => {
     setHoveredMaskId(maskId);
   }, [setHoveredMaskId]);
+
+  // Don't render until client-side to prevent hydration issues
+  if (!isClient) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
+        <div className="flex items-center justify-center h-screen">
+          <div className="text-center">
+            <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-xl">
+              <span className="text-white font-bold text-xl">S2</span>
+            </div>
+            <p className="text-gray-500 font-medium">Loading...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
@@ -504,34 +598,75 @@ export default function HomePage() {
         <div className="grid grid-cols-1 xl:grid-cols-8 gap-6">
           {/* Left Sidebar - Tools */}
           <div className="xl:col-span-2 space-y-4">
-            <Toolbar
-              onGenerateMasks={handleGenerateMasks}
-              onGenerateAdvancedMasks={handleGenerateAdvancedMasks}
-              onPaintMasks={handlePaintMasks}
-              onDownloadImage={handleDownloadImage}
-              onReset={handleReset}
-              onToggleAllMasks={handleToggleAllMasks}
-              onToggleClickToGenerate={handleToggleClickToGenerate}
-              isGeneratingMasks={isGeneratingMasks}
-              isPainting={isPainting}
-              isDownloading={isDownloading}
-              hasImage={!!imageData}
-              hasMasks={masks.length > 0}
-              hasSelectedMasks={selectedMasks.size > 0}
-              isClickToGenerateMode={isClickToGenerateMode}
-              isGeneratingAdvancedMasks={isGeneratingAdvancedMasks}
-            />
+            <ClientOnly
+              fallback={
+                <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl border border-gray-200/50 p-4">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center space-x-2">
+                      <div className="w-6 h-6 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
+                        <span className="text-white text-xs">⚙️</span>
+                      </div>
+                      <h3 className="text-base font-bold text-gray-900">Tools</h3>
+                    </div>
+                  </div>
+                  <div className="space-y-3">
+                    {Array.from({ length: 6 }, (_, i) => (
+                      <div key={i} className="w-full h-10 bg-gray-200 rounded-xl animate-pulse" />
+                    ))}
+                  </div>
+                </div>
+              }
+            >
+              <Toolbar
+                onGenerateMasks={handleGenerateMasks}
+                onGenerateAdvancedMasks={handleGenerateAdvancedMasks}
+                onPaintMasks={handlePaintMasks}
+                onDownloadImage={handleDownloadImage}
+                onReset={handleReset}
+                onToggleAllMasks={handleToggleAllMasks}
+                onToggleClickToGenerate={handleToggleClickToGenerate}
+                isGeneratingMasks={isGeneratingMasks}
+                isPainting={isPainting}
+                isDownloading={isDownloading}
+                hasImage={!!imageData}
+                hasMasks={masks.length > 0}
+                hasSelectedMasks={selectedMasks.size > 0}
+                isClickToGenerateMode={isClickToGenerateMode}
+                isGeneratingAdvancedMasks={isGeneratingAdvancedMasks}
+              />
+            </ClientOnly>
             
-            <ColorPalette
-              colors={[
-                '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD',
-                '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E9', '#F8C471', '#82E0AA',
-                '#F1948A', '#85C1E9', '#FAD7A0', '#D7BDE2', '#A9DFBF', '#F9E79F',
-                '#F5B7B1', '#AED6F1', '#ABEBC6', '#FDEBD0', '#E8DAEF', '#D5F4E6'
-              ]}
-              selectedColor={currentColor}
-              onColorSelect={handleColorSelect}
-            />
+            <ClientOnly
+              fallback={
+                <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl border border-gray-200/50 p-4">
+                  <div className="flex items-center space-x-2 mb-4">
+                    <div className="w-6 h-6 bg-gradient-to-r from-pink-500 to-purple-600 rounded-lg flex items-center justify-center">
+                      <span className="text-white text-xs">🎨</span>
+                    </div>
+                    <h3 className="text-base font-bold text-gray-900">Color Palette</h3>
+                  </div>
+                  <div className="grid grid-cols-5 gap-2 mb-4">
+                    {Array.from({ length: 25 }, (_, i) => (
+                      <div
+                        key={i}
+                        className="w-10 h-10 rounded-xl border-2 border-gray-300 shadow-sm bg-gray-200"
+                      />
+                    ))}
+                  </div>
+                </div>
+              }
+            >
+              <ColorPalette
+                colors={[
+                  '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD',
+                  '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E9', '#F8C471', '#82E0AA',
+                  '#F1948A', '#85C1E9', '#FAD7A0', '#D7BDE2', '#A9DFBF', '#F9E79F',
+                  '#F5B7B1', '#AED6F1', '#ABEBC6', '#FDEBD0', '#E8DAEF', '#D5F4E6'
+                ]}
+                selectedColor={currentColor}
+                onColorSelect={handleColorSelect}
+              />
+            </ClientOnly>
           </div>
 
           {/* Main Canvas Area */}
@@ -601,32 +736,67 @@ export default function HomePage() {
                     </div>
                   </div>
                   <div className="w-full h-[600px] lg:h-[700px] xl:h-[750px] relative">
-                    <InteractiveCanvas
-                      imageData={imageData}
-                      masks={masks}
-                      selectedMasks={selectedMasks}
-                      coloredMasks={coloredMasks}
-                      showAllMasks={showAllMasks}
-                      hoveredMaskId={hoveredMaskId}
-                      onMaskSelect={handleMaskSelect}
-                      onPointClick={handlePointClick}
-                      setHoveredMaskId={setHoveredMaskId}
-                      sessionId={sessionId}
-                      isClickToGenerateMode={isClickToGenerateMode}
-                    />
+                    <ClientOnly
+                      fallback={
+                        <div className="flex items-center justify-center w-full h-full bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl border-2 border-dashed border-gray-300">
+                          <div className="text-center">
+                            <div className="w-16 h-16 bg-gray-200 rounded-full flex items-center justify-center mx-auto mb-4">
+                              <div className="w-8 h-8 bg-gray-400 rounded-full animate-pulse"></div>
+                            </div>
+                            <p className="text-gray-500 font-medium">Loading canvas...</p>
+                          </div>
+                        </div>
+                      }
+                    >
+                      <InteractiveCanvas
+                        imageData={imageData}
+                        masks={masks}
+                        selectedMasks={selectedMasks}
+                        coloredMasks={coloredMasks}
+                        showAllMasks={showAllMasks}
+                        hoveredMaskId={hoveredMaskId}
+                        onMaskSelect={handleMaskSelect}
+                        onPointClick={handlePointClick}
+                        setHoveredMaskId={setHoveredMaskId}
+                        sessionId={sessionId}
+                        isClickToGenerateMode={isClickToGenerateMode}
+                      />
+                    </ClientOnly>
                   </div>
                 </div>
 
                 {/* Mask Gallery */}
                 {masks.length > 0 && (
-                  <MaskGallery
-                    masks={masks}
-                    selectedMasks={selectedMasks}
-                    hoveredMaskId={hoveredMaskId}
-                    onMaskSelect={handleMaskSelect}
-                    onMaskDeselect={handleMaskDeselect}
-                    onMaskHover={handleMaskHover}
-                  />
+                  <ClientOnly
+                    fallback={
+                      <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl border border-gray-200/50 p-8">
+                        <div className="flex items-center justify-between mb-8">
+                          <div className="flex items-center space-x-3">
+                            <div className="w-8 h-8 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center">
+                              <span className="text-white text-xs">🎭</span>
+                            </div>
+                            <h3 className="text-2xl font-bold text-gray-900">
+                              Generated Masks ({masks.length})
+                            </h3>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                          {Array.from({ length: 4 }, (_, i) => (
+                            <div key={i} className="w-full h-40 bg-gray-200 rounded-xl animate-pulse" />
+                          ))}
+                        </div>
+                      </div>
+                    }
+                  >
+                    <MaskGallery
+                      masks={masks}
+                      selectedMasks={selectedMasks}
+                      hoveredMaskId={hoveredMaskId}
+                      onMaskSelect={handleMaskSelect}
+                      onMaskDeselect={handleMaskDeselect}
+                      onMaskHover={handleMaskHover}
+                    />
+                  </ClientOnly>
                 )}
 
                 {/* Painted Result */}

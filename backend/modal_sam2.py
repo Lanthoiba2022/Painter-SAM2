@@ -344,7 +344,7 @@ class SAM2Model:
             raise ValueError(f"Failed to decode image: {str(e)}")
     
     def _encode_mask(self, mask: np.ndarray) -> str:
-        """Encode mask to base64 string with error handling"""
+        """Encode mask to base64 string with transparent background like original SAM demo"""
         try:
             # Ensure mask is boolean and convert to uint8
             if mask.dtype == bool:
@@ -352,8 +352,16 @@ class SAM2Model:
             else:
                 mask_img = (mask > 0).astype(np.uint8) * 255
             
-            # Create PIL image
-            mask_pil = Image.fromarray(mask_img, mode='L')
+            # Create RGBA image with transparent background (like original SAM demo)
+            # White mask on transparent background
+            rgba_mask = np.zeros((mask_img.shape[0], mask_img.shape[1], 4), dtype=np.uint8)
+            rgba_mask[:, :, 0] = mask_img  # Red channel
+            rgba_mask[:, :, 1] = mask_img  # Green channel  
+            rgba_mask[:, :, 2] = mask_img  # Blue channel
+            rgba_mask[:, :, 3] = mask_img  # Alpha channel (transparency)
+            
+            # Create PIL image with RGBA mode for transparency
+            mask_pil = Image.fromarray(rgba_mask, mode='RGBA')
             
             # Convert to base64
             buffer = io.BytesIO()
@@ -368,7 +376,13 @@ class SAM2Model:
         """Decode base64 mask to numpy array"""
         try:
             mask_data = base64.b64decode(base64_mask)
-            mask_image = Image.open(io.BytesIO(mask_data)).convert('L')
+            mask_image = Image.open(io.BytesIO(mask_data))
+            
+            # Handle both RGBA and L modes
+            if mask_image.mode == 'RGBA':
+                # For RGBA masks, convert to grayscale and then to binary
+                mask_image = mask_image.convert('L')
+            
             return np.array(mask_image) > 0
         except Exception as e:
             logger.error(f"Error decoding mask: {str(e)}")
