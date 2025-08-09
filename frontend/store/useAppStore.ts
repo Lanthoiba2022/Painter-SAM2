@@ -3,6 +3,8 @@ import { devtools } from 'zustand/middleware';
 import { persist } from 'zustand/middleware';
 import { AppState, MaskInfo, ColoredMask } from '@/types';
 import { api } from '@/lib/api';
+import { supabase } from '@/lib/supabase';
+import type { User } from '@supabase/supabase-js';
 
 // Enhanced types for caching
 interface EmbeddingCache {
@@ -30,12 +32,21 @@ interface AppStore extends AppState {
   hoveredMaskId: number | null;
   isClickToGenerateMode: boolean;
   
+  // Authentication state
+  user: User | null;
+  isAuthenticated: boolean;
+  isAuthLoading: boolean;
+  
   // New caching state
   embeddingCache: EmbeddingCache;
   maskCache: MaskCache;
   currentImageHash: string | null;
   isEmbeddingCached: boolean;
   isMaskCached: boolean;
+  
+  // Duplicate detection state
+  isDuplicateChecking: boolean;
+  duplicateStatus: 'checking' | 'duplicate' | 'new' | null;
   
   // Actions
   setSessionId: (sessionId: string) => void;
@@ -59,6 +70,15 @@ interface AppStore extends AppState {
   setDownloading: (isDownloading: boolean) => void;
   setHoveredMaskId: (maskId: number | null) => void;
   setClickToGenerateMode: (isActive: boolean) => void;
+  
+  // Authentication actions
+  setUser: (user: User | null) => void;
+  setIsAuthenticated: (isAuthenticated: boolean) => void;
+  setIsAuthLoading: (isLoading: boolean) => void;
+  
+  // Duplicate detection actions
+  setIsDuplicateChecking: (isChecking: boolean) => void;
+  setDuplicateStatus: (status: 'checking' | 'duplicate' | 'new' | null) => void;
   
   // New caching actions
   setEmbeddingCache: (imageHash: string, embedding: string, imageData: string, width: number, height: number) => void;
@@ -119,12 +139,21 @@ export const useAppStore = create<AppStore>()(
         hoveredMaskId: null,
         isClickToGenerateMode: false,
         
+        // Authentication state
+        user: null,
+        isAuthenticated: false,
+        isAuthLoading: true,
+        
         // New caching state
         embeddingCache: {},
         maskCache: {},
         currentImageHash: null,
         isEmbeddingCached: false,
         isMaskCached: false,
+        
+        // Duplicate detection state
+        isDuplicateChecking: false,
+        duplicateStatus: null,
 
         // Session management
         setSessionId: (sessionId: string) =>
@@ -285,6 +314,23 @@ export const useAppStore = create<AppStore>()(
         setClickToGenerateMode: (isActive: boolean) =>
           set({ isClickToGenerateMode: isActive }, false, 'setClickToGenerateMode'),
 
+        // Authentication actions
+        setUser: (user: User | null) =>
+          set({ user, isAuthenticated: !!user }, false, 'setUser'),
+
+        setIsAuthenticated: (isAuthenticated: boolean) =>
+          set({ isAuthenticated }, false, 'setIsAuthenticated'),
+
+        setIsAuthLoading: (isAuthLoading: boolean) =>
+          set({ isAuthLoading }, false, 'setIsAuthLoading'),
+
+        // Duplicate detection actions
+        setIsDuplicateChecking: (isDuplicateChecking: boolean) =>
+          set({ isDuplicateChecking }, false, 'setIsDuplicateChecking'),
+
+        setDuplicateStatus: (duplicateStatus: 'checking' | 'duplicate' | 'new' | null) =>
+          set({ duplicateStatus }, false, 'setDuplicateStatus'),
+
         // New caching actions
         setEmbeddingCache: (imageHash: string, embedding: string, imageData: string, width: number, height: number) =>
           set(
@@ -398,11 +444,16 @@ export const useAppStore = create<AppStore>()(
             ...initialState, 
             hoveredMaskId: null, 
             isClickToGenerateMode: false,
+            user: null,
+            isAuthenticated: false,
+            isAuthLoading: true,
             embeddingCache: {},
             maskCache: {},
             currentImageHash: null,
             isEmbeddingCached: false,
             isMaskCached: false,
+            isDuplicateChecking: false,
+            duplicateStatus: null,
           }, false, 'reset');
         },
 
@@ -513,5 +564,14 @@ export const useSelectedMasksCount = () =>
   useAppStore((state) => state.selectedMasks.size);
 export const useMasksCount = () => useAppStore((state) => state.masks.length);
 export const useColoredMasksCount = () => useAppStore((state) => state.coloredMasks.length);
+
+// Authentication selectors
+export const useUser = () => useAppStore((state) => state.user);
+export const useIsAuthenticated = () => useAppStore((state) => state.isAuthenticated);
+export const useIsAuthLoading = () => useAppStore((state) => state.isAuthLoading);
+
+// Duplicate detection selectors
+export const useIsDuplicateChecking = () => useAppStore((state) => state.isDuplicateChecking);
+export const useDuplicateStatus = () => useAppStore((state) => state.duplicateStatus);
 
 export default useAppStore;

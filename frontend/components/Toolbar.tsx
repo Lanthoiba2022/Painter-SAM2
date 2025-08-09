@@ -36,6 +36,9 @@ const Toolbar: React.FC<ToolbarProps> = ({
   hasSelectedMasks,
   isClickToGenerateMode,
   showAllMasks,
+  onSave,
+  canSave,
+  onFetch,
 }) => {
   const [showHelp, setShowHelp] = useState(false);
 
@@ -221,6 +224,29 @@ const Toolbar: React.FC<ToolbarProps> = ({
           )}
         </motion.button>
 
+        {/* Check + Save Row */}
+        {(onFetch || (onSave && canSave)) && (
+          <div className="flex items-center space-x-2">
+            {onFetch && (
+              <button
+                onClick={onFetch}
+                className="flex-1 px-3 py-2 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+              >
+                Check
+              </button>
+            )}
+            {onSave && (
+              <button
+                onClick={onSave}
+                disabled={!canSave}
+                className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${canSave ? 'bg-green-600 text-white hover:bg-green-700' : 'bg-gray-100 text-gray-400 cursor-not-allowed'}`}
+              >
+                Save
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Divider */}
         <div className="border-t border-gray-200/50 my-4" />
 
@@ -254,7 +280,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
         </motion.button>
       </div>
 
-      {/* Status Indicators */}
+      {/* Status + Actions */}
       <div className="mt-4 p-3 bg-gray-50/50 rounded-xl border border-gray-200/50">
         <h4 className="text-xs font-semibold text-gray-700 mb-3">Status</h4>
         <div className="space-y-2">
@@ -286,6 +312,18 @@ const Toolbar: React.FC<ToolbarProps> = ({
               <span className="text-xs font-medium">{isClickToGenerateMode ? 'ON' : 'OFF'}</span>
             </div>
           </div>
+        </div>
+
+        {/* Inline actions (optional) */}
+        <div className="mt-3 space-y-2">
+          {onSave && canSave && (
+            <button
+              onClick={onSave}
+              className="w-full px-3 py-2 rounded-lg text-xs font-semibold bg-green-600 text-white hover:bg-green-700 transition-colors"
+            >
+              Save to Library
+            </button>
+          )}
         </div>
       </div>
     </div>

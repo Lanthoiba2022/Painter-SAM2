@@ -8,11 +8,15 @@ import UploadZone from '@/components/UploadZone';
 import MaskGallery from '@/components/MaskGallery';
 import ColorPalette from '@/components/ColorPalette';
 import Toolbar from '@/components/Toolbar';
+import AuthModal from '@/components/AuthModal';
+import UserProfile from '@/components/UserProfile';
+import DuplicateNotification from '@/components/DuplicateNotification';
 import { useAppStore } from '@/store/useAppStore';
 import { api, handleApiError } from '@/lib/api';
 import { MaskInfo, ColoredMask } from '@/types';
 import ClientOnly from '@/components/ClientOnly';
-import { Info } from 'lucide-react';
+import { supabase } from '@/lib/supabase';
+import { handleImageUpload, generateMasksForImage, saveMasksToStorage, fetchDuplicateImage, initializeUserStorage } from '@/lib/upload-workflow';
 
 // Dynamically import InteractiveCanvas to prevent hydration issues
 const InteractiveCanvas = dynamic(() => import('@/components/InteractiveCanvas'), {
@@ -56,6 +60,15 @@ export default function HomePage() {
     hoveredMaskId,
     isClickToGenerateMode,
     
+    // Authentication state
+    user,
+    isAuthenticated,
+    isAuthLoading,
+    
+    // Duplicate detection state
+    isDuplicateChecking,
+    duplicateStatus,
+    
     // Caching state
     currentImageHash,
     isEmbeddingCached,
@@ -82,6 +95,15 @@ export default function HomePage() {
     generateMaskAtPoint,
     reset,
     
+    // Authentication actions
+    setUser,
+    setIsAuthenticated,
+    setIsAuthLoading,
+    
+    // Duplicate detection actions
+    setIsDuplicateChecking,
+    setDuplicateStatus,
+    
     // Caching actions
     setEmbeddingCache,
     setMaskCache,
@@ -92,6 +114,54 @@ export default function HomePage() {
 
   const [isUploading, setIsUploading] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [showAuthModal, setShowAuthModal] = useState(false);
+
+  // Add new state for improved workflow
+  const [showNewImagePopup, setShowNewImagePopup] = useState(false);
+  const [currentFile, setCurrentFile] = useState<File | null>(null);
+  const [currentFileHash, setCurrentFileHash] = useState<string | null>(null);
+  const [canSave, setCanSave] = useState(false);
+  const [hasSaved, setHasSaved] = useState(false);
+
+  // Setup authentication listener
+  useEffect(() => {
+    const setupAuth = async () => {
+      // Get initial session
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (session?.user) {
+        setUser(session.user);
+        setIsAuthenticated(true);
+        // Initialize user storage
+        await initializeUserStorage(session.user.id);
+      }
+      
+      setIsAuthLoading(false);
+      
+      // Listen for auth changes
+      const { data: { subscription } } = supabase.auth.onAuthStateChange(
+        async (event, session) => {
+          console.log('Auth state changed:', event, session?.user?.email);
+          
+          if (session?.user) {
+            setUser(session.user);
+            setIsAuthenticated(true);
+            // Initialize user storage for new users
+            await initializeUserStorage(session.user.id);
+          } else {
+            setUser(null);
+            setIsAuthenticated(false);
+          }
+          
+          setIsAuthLoading(false);
+        }
+      );
+      
+      return () => subscription.unsubscribe();
+    };
+    
+    setupAuth();
+  }, [setUser, setIsAuthenticated, setIsAuthLoading]);
 
   // Clear cache on page refresh
   useEffect(() => {
@@ -127,69 +197,98 @@ export default function HomePage() {
     }
   }, [currentImageHash, masks.length, getCachedMasks, setMasks, setIsMaskCached]);
 
-  // Handle image upload with caching
-  const handleImageUpload = useCallback(async (file: File) => {
+  // Handle image upload with Supabase integration and duplicate detection
+  const handleImageUploadWithAuth = useCallback(async (file: File) => {
+    if (!isAuthenticated || !user) {
+      setShowAuthModal(true);
+      return;
+    }
+
     try {
       setIsUploading(true);
       setError(null);
+      setCurrentFile(file);
       
-      // Create preview immediately
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const previewUrl = e.target?.result as string;
-        // Set preview immediately for better UX
-        setImageData(previewUrl, 0, 0, file.name);
-      };
-      reader.readAsDataURL(file);
+      // Use the integrated upload workflow (no auto-generation)
+      const result = await handleImageUpload(
+        file,
+        user.id,
+        setDuplicateStatus,
+        setMasks,
+        setImageData,
+        setSessionId
+      );
       
-      toast.loading('Uploading image...', { id: 'upload' });
-      
-      const response = await api.uploadImage(file);
-      
-      setSessionId(response.session_id);
-      setImageData(response.image_data, response.width, response.height, file.name);
-      
-      toast.success('Image uploaded successfully!', { id: 'upload' });
-      
-      // Generate embedding immediately after upload
-      try {
-        toast.loading('Generating image embedding...', { id: 'embedding' });
-        const embeddingResponse = await api.getImageEmbedding(response.session_id);
-        setIsEmbeddingCached(true);
-        toast.success('Image embedding cached!', { id: 'embedding' });
-      } catch (embeddingError) {
-        console.warn('Failed to generate embedding:', embeddingError);
-        // Don't fail the upload if embedding fails
+      if (result.imageHash) {
+        setCurrentFileHash(result.imageHash);
       }
       
-      // Check for cached masks and embeddings
-      if (currentImageHash) {
-        const cachedMasks = getCachedMasks(currentImageHash);
-        if (cachedMasks && cachedMasks.length > 0) {
-          setMasks(cachedMasks);
-          setIsMaskCached(true);
-          toast.success(`Loaded ${cachedMasks.length} cached masks!`, { 
-            id: 'cached-masks',
-            duration: 3000 
-          });
-        }
+      // Show popup for new images regardless of current duplicateStatus state
+      if (!result.isExistingImage) {
+        setShowNewImagePopup(true);
       }
       
-      // Auto-generate masks after upload if no cached masks
-      if (!masks.length) {
-        setTimeout(() => {
-          handleGenerateMasks();
-        }, 1000);
+      // If it's an existing image, reset duplicate status after loading
+      if (result.isExistingImage) {
+        // Duplicate image already has masks; allow Save to re-save if needed
+        setCanSave(masks.length > 0);
+        setHasSaved(false);
+        setTimeout(() => setDuplicateStatus(null), 3000);
       }
       
     } catch (err) {
       const errorMessage = handleApiError(err);
       setError(errorMessage);
-      toast.error(`Upload failed: ${errorMessage}`, { id: 'upload' });
+      toast.error(`Upload failed: ${errorMessage}`);
     } finally {
       setIsUploading(false);
     }
-  }, [setSessionId, setImageData, setError, currentImageHash, getCachedMasks, setMasks, setIsMaskCached, setIsEmbeddingCached, masks.length]);
+  }, [isAuthenticated, user, setDuplicateStatus, setMasks, setImageData, setSessionId, setError]);
+
+  // Generate masks when user explicitly clicks the button
+  const handleGenerateMasksExplicit = useCallback(async (shouldSave: boolean = false) => {
+    if (!sessionId || !currentFile || !user || !currentFileHash) {
+      toast.error('Missing required data for mask generation');
+      return;
+    }
+    
+    try {
+      setGeneratingMasks(true);
+      setError(null);
+      setShowNewImagePopup(false);
+      
+      const generatedMasks = await generateMasksForImage(
+        sessionId,
+        currentFile,
+        user.id,
+        currentFileHash,
+        shouldSave
+      );
+      
+      setMasks(generatedMasks);
+      clearSelectedMasks();
+      setDuplicateStatus(null);
+
+      // Enable Save when we have masks and an image hash
+      if (generatedMasks.length > 0) {
+        setCanSave(true);
+        setHasSaved(false);
+      }
+      
+      // Cache the masks for future use
+      if (currentFileHash) {
+        setMaskCache(currentFileHash, generatedMasks, 32, 0.88, 0.95);
+        setIsMaskCached(true);
+      }
+      
+    } catch (err) {
+      const errorMessage = handleApiError(err);
+      setError(errorMessage);
+      toast.error(`Failed to generate masks: ${errorMessage}`);
+    } finally {
+      setGeneratingMasks(false);
+    }
+  }, [sessionId, currentFile, user, currentFileHash, setMasks, clearSelectedMasks, setMaskCache, setIsMaskCached, setError, setGeneratingMasks, setDuplicateStatus]);
 
   // Generate masks with caching
   const handleGenerateMasks = useCallback(async () => {
@@ -553,6 +652,74 @@ export default function HomePage() {
     setHoveredMaskId(maskId);
   }, [setHoveredMaskId]);
 
+  // Save current image and masks to storage
+  const handleSaveToStorage = useCallback(async () => {
+    if (!currentFile || !user || !currentFileHash || !masks.length) {
+      toast.error('Nothing to save');
+      return;
+    }
+    
+    try {
+      const success = await saveMasksToStorage(currentFile, user.id, currentFileHash, masks);
+      if (success) {
+        setCanSave(false);
+        setHasSaved(true);
+        toast.success('Saved to your library');
+      }
+    } catch (err) {
+      toast.error('Failed to save to storage');
+    }
+  }, [currentFile, user, currentFileHash, masks]);
+
+  // Fetch duplicates manually
+  const handleFetchDuplicates = useCallback(async () => {
+    if (!currentFile || !user) {
+      toast.error('No image to check');
+      return;
+    }
+    
+    try {
+      const result = await fetchDuplicateImage(currentFile, user.id);
+      
+      if (result.isDuplicate && result.masks) {
+        setMasks(result.masks);
+        setDuplicateStatus('duplicate');
+        setTimeout(() => setDuplicateStatus(null), 3000);
+      } else {
+        setDuplicateStatus('new');
+        setTimeout(() => setDuplicateStatus(null), 3000);
+      }
+    } catch (err) {
+      toast.error('Failed to check for duplicates');
+    }
+  }, [currentFile, user, setMasks, setDuplicateStatus]);
+
+  // Handle logout with proper cleanup
+  const handleSignOut = useCallback(() => {
+    // Clear all app state
+    reset();
+    
+    // Clear localStorage
+    localStorage.removeItem('sam2-building-painter-store');
+    
+    // Reset local state
+    setCurrentFile(null);
+    setCurrentFileHash(null);
+    setCanSave(false);
+    setHasSaved(false);
+    setShowNewImagePopup(false);
+    setDuplicateStatus(null);
+    
+    // Set loading to false immediately to prevent infinite loading
+    setIsAuthLoading(false);
+  }, [reset, setIsAuthLoading, setDuplicateStatus]);
+
+  // Handle new image popup close
+  const handleNewImagePopupClose = useCallback(() => {
+    setShowNewImagePopup(false);
+    setDuplicateStatus(null);
+  }, [setDuplicateStatus]);
+
   // Don't render until client-side to prevent hydration issues
   if (!isClient) {
     return (
@@ -576,9 +743,10 @@ export default function HomePage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
       {/* Header */}
-      <header className="bg-white/80 backdrop-blur-md shadow-sm border-b border-gray-200/50 sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-6 lg:px-8">
+      <header className="bg-white/80 backdrop-blur-sm border-b border-gray-200/50 sticky top-0 z-40">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
+            {/* Logo */}
             <div className="flex items-center space-x-3">
               <div className="w-10 h-10 rounded-xl flex items-center justify-center shadow-lg overflow-hidden">
                 <img 
@@ -587,22 +755,34 @@ export default function HomePage() {
                   className="w-full h-full object-cover"
                 />
               </div>
-              <h1 className="text-xl font-bold text-gray-900">
-                SAM2 Building Painter
-              </h1>
+              <div>
+                <h1 className="text-xl font-bold text-gray-900">SAM2 Building Painter</h1>
+                <p className="text-xs text-gray-500">AI-Powered Segmentation & Painting</p>
+              </div>
             </div>
+
+            {/* Auth Section */}
             <div className="flex items-center space-x-4">
-              <button
-                className="p-2 rounded-full bg-blue-100 hover:bg-blue-200 transition-colors text-blue-600 shadow-sm"
-                title="Help"
-                onClick={() => setShowHelp(true)}
-              >
-                <Info className="w-5 h-5" />
-              </button>
+              {isAuthLoading ? (
+                <div className="flex items-center space-x-2">
+                  <div className="w-4 h-4 bg-gray-300 rounded-full animate-pulse"></div>
+                  <span className="text-sm text-gray-500">Loading...</span>
+                </div>
+              ) : isAuthenticated && user ? (
+                <UserProfile user={user} onSignOut={handleSignOut} />
+              ) : (
+                <button
+                  onClick={() => setShowAuthModal(true)}
+                  className="bg-gradient-to-r from-blue-600 to-purple-600 text-white px-6 py-2 rounded-xl font-medium hover:from-blue-700 hover:to-purple-700 transition-all duration-200 shadow-lg hover:shadow-xl"
+                >
+                  Sign In
+                </button>
+              )}
             </div>
           </div>
         </div>
       </header>
+
       {/* Help Modal */}
       {showHelp && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
@@ -630,25 +810,42 @@ export default function HomePage() {
         </div>
       )}
 
+      {/* Duplicate Status Notification */}
+      <DuplicateNotification
+        status={duplicateStatus}
+        isVisible={showNewImagePopup}
+        masksCount={masks.length}
+        onGenerateMasks={() => handleGenerateMasksExplicit(false)}
+        onFetchDuplicates={handleFetchDuplicates}
+        onClose={handleNewImagePopupClose}
+      />
+
+      {/* Auth Modal */}
+      <AuthModal
+        isOpen={showAuthModal}
+        onClose={() => setShowAuthModal(false)}
+        onSuccess={() => setShowAuthModal(false)}
+      />
+
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 lg:px-6 py-6">
-        <div className="grid grid-cols-1 xl:grid-cols-8 gap-6">
-          {/* Left Sidebar - Tools */}
-          <div className="xl:col-span-2 space-y-4">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-8">
+          {/* Sidebar */}
+          <div className="xl:col-span-3 space-y-6 hidden lg:block">
+            {/* Tools Panel */}
             <ClientOnly
               fallback={
                 <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl border border-gray-200/50 p-4">
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="flex items-center space-x-2">
-                      <div className="w-6 h-6 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-                        <span className="text-white text-xs">⚙️</span>
-                      </div>
-                      <h3 className="text-base font-bold text-gray-900">Tools</h3>
-                    </div>
+                  <div className="flex items-center space-x-2 mb-4">
+                    <div className="w-6 h-6 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg"></div>
+                    <h3 className="text-base font-bold text-gray-900">Tools</h3>
                   </div>
                   <div className="space-y-3">
                     {Array.from({ length: 6 }, (_, i) => (
-                      <div key={i} className="w-full h-10 bg-gray-200 rounded-xl animate-pulse" />
+                      <div
+                        key={i}
+                        className="h-12 bg-gray-200 rounded-xl animate-pulse"
+                      />
                     ))}
                   </div>
                 </div>
@@ -671,9 +868,13 @@ export default function HomePage() {
                 isClickToGenerateMode={isClickToGenerateMode}
                 isGeneratingAdvancedMasks={isGeneratingAdvancedMasks}
                 showAllMasks={showAllMasks}
+                onSave={handleSaveToStorage}
+                canSave={!!(currentFile && masks.length > 0 && !hasSaved)}
+                onFetch={handleFetchDuplicates}
               />
             </ClientOnly>
             
+            {/* Color Palette */}
             <ClientOnly
               fallback={
                 <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl border border-gray-200/50 p-4">
@@ -709,7 +910,7 @@ export default function HomePage() {
           </div>
 
           {/* Main Canvas Area */}
-          <div className="xl:col-span-6">
+          <div className="xl:col-span-9">
             {!imageData ? (
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
@@ -728,12 +929,19 @@ export default function HomePage() {
                     Welcome to SAM2 Building Painter
                   </h2>
                   <p className="text-gray-600 mb-8 max-w-2xl mx-auto text-lg leading-relaxed">
-                    Upload an image of an Indian house or building, and use AI-powered segmentation 
-                    to automatically identify walls and other architectural elements. Then paint them 
-                    with beautiful colors to create stunning visualizations.
+                    {isAuthenticated ? (
+                      <>Upload an image of an Indian house or building, and use AI-powered segmentation 
+                      to automatically identify walls and other architectural elements. Then paint them 
+                      with beautiful colors to create stunning visualizations. Your images are securely 
+                      stored and duplicates are detected automatically.</>
+                    ) : (
+                      <>Sign in to upload images and use AI-powered segmentation to automatically 
+                      identify walls and other architectural elements. Your images will be securely 
+                      stored with intelligent duplicate detection.</>
+                    )}
                   </p>
                   <UploadZone
-                    onImageUpload={handleImageUpload}
+                    onImageUpload={handleImageUploadWithAuth}
                     isLoading={isUploading}
                   />
                 </div>
@@ -774,10 +982,9 @@ export default function HomePage() {
                           <span>{coloredMasks.length} colored</span>
                         </div>
                       )}
-                      {/* Removed cached indicator from image preview to reduce redundancy */}
                     </div>
                   </div>
-                  <div className="w-full h-[600px] lg:h-[700px] xl:h-[750px] relative">
+                                     <div className="w-full relative">
                     <ClientOnly
                       fallback={
                         <div className="flex items-center justify-center w-full h-full bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl border-2 border-dashed border-gray-300">
@@ -799,7 +1006,7 @@ export default function HomePage() {
                         hoveredMaskId={hoveredMaskId}
                         onMaskSelect={handleMaskSelect}
                         onPointClick={handlePointClick}
-                        setHoveredMaskId={setHoveredMaskId}
+                        setHoveredMaskId={handleMaskHover}
                         sessionId={sessionId}
                         isClickToGenerateMode={isClickToGenerateMode}
                       />
@@ -807,24 +1014,21 @@ export default function HomePage() {
                   </div>
                 </div>
 
-                {/* Mask Gallery */}
+                {/* Mask Gallery below Image Preview */}
                 {masks.length > 0 && (
                   <ClientOnly
                     fallback={
-                      <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl border border-gray-200/50 p-8">
-                        <div className="flex items-center justify-between mb-8">
-                          <div className="flex items-center space-x-3">
-                            <div className="w-8 h-8 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center">
-                              <span className="text-white text-xs">🎭</span>
-                            </div>
-                            <h3 className="text-2xl font-bold text-gray-900">
-                              Generated Masks ({masks.length})
-                            </h3>
-                          </div>
+                      <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl border border-gray-200/50 p-4 mt-6">
+                        <div className="flex items-center space-x-2 mb-4">
+                          <div className="w-6 h-6 bg-gradient-to-r from-green-500 to-teal-600 rounded-lg"></div>
+                          <h3 className="text-base font-bold text-gray-900">Mask Gallery</h3>
                         </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                        <div className="space-y-3">
                           {Array.from({ length: 4 }, (_, i) => (
-                            <div key={i} className="w-full h-40 bg-gray-200 rounded-xl animate-pulse" />
+                            <div
+                              key={i}
+                              className="h-24 bg-gray-200 rounded-xl animate-pulse"
+                            />
                           ))}
                         </div>
                       </div>
@@ -835,67 +1039,15 @@ export default function HomePage() {
                       selectedMasks={selectedMasks}
                       hoveredMaskId={hoveredMaskId}
                       onMaskSelect={handleMaskSelect}
-                      onMaskDeselect={handleMaskDeselect}
                       onMaskHover={handleMaskHover}
                     />
                   </ClientOnly>
-                )}
-
-                {/* Painted Result */}
-                {paintedImage && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl border border-gray-200/50 p-6"
-                  >
-                    <div className="flex items-center space-x-3 mb-4">
-                      <div className="w-8 h-8 bg-gradient-to-r from-green-500 to-emerald-600 rounded-lg flex items-center justify-center">
-                        <span className="text-white font-bold text-xs">✓</span>
-                      </div>
-                      <h3 className="text-xl font-bold text-gray-900">
-                        Painted Result
-                      </h3>
-                    </div>
-                    <div className="flex justify-center">
-                      <img
-                        src={`data:image/png;base64,${paintedImage}`}
-                        alt="Painted building"
-                        className="max-w-full h-auto rounded-xl shadow-lg"
-                      />
-                    </div>
-                  </motion.div>
-                )}
-
-                {/* Error Display */}
-                {error && (
-                  <motion.div
-                    initial={{ opacity: 0, y: -10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="bg-red-50/80 backdrop-blur-sm border border-red-200/50 rounded-2xl p-4"
-                  >
-                    <div className="flex items-center space-x-3">
-                      <div className="w-5 h-5 bg-red-500 rounded-full"></div>
-                      <p className="text-red-700 font-medium">{error}</p>
-                    </div>
-                  </motion.div>
                 )}
               </div>
             )}
           </div>
         </div>
       </main>
-
-      {/* Footer */}
-      <footer className="bg-white/80 backdrop-blur-md border-t border-gray-200/50 mt-16">
-        <div className="max-w-7xl mx-auto px-6 lg:px-8 py-8">
-          <div className="text-center text-sm text-gray-500">
-            <p>
-              Built with Next.js, FastAPI, Modal GPU. 
-              Powered by Meta AI's Segment Anything Model 2.
-            </p>
-          </div>
-        </div>
-      </footer>
     </div>
   );
 } 

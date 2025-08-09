@@ -161,6 +161,10 @@ export interface ToolbarProps {
   hasSelectedMasks: boolean;
   isClickToGenerateMode: boolean;
   showAllMasks: boolean;
+  // Optional extended actions
+  onSave?: () => void;
+  canSave?: boolean;
+  onFetch?: () => void;
 }
 
 export interface UploadZoneProps {

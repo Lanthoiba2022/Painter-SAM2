@@ -50,7 +50,10 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
   useEffect(() => {
     if (imageData) {
       const img = new Image();
-      img.crossOrigin = 'anonymous';
+      // Only set crossOrigin for remote URLs; data URLs don't need it and may trigger CORS issues
+      if (/^https?:\/\//i.test(imageData)) {
+        img.crossOrigin = 'anonymous';
+      }
       img.onload = () => {
         setImageElement(img);
         updateCanvasSize(img);
@@ -59,7 +62,7 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
     }
   }, [imageData]);
 
-  // Update canvas size to fit container with proper aspect ratio
+  // FIXED: Update canvas size to match image exactly (no scaling)
   const updateCanvasSize = useCallback((img: HTMLImageElement) => {
     if (!containerRef.current) return;
 
@@ -83,6 +86,7 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
       canvasWidth = containerHeight * imgAspectRatio;
     }
     
+    // CRITICAL FIX: Make programmatic canvas size match the image display size exactly
     setCanvasSize({ width: canvasWidth, height: canvasHeight });
   }, []);
 
@@ -98,26 +102,49 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
     return () => window.removeEventListener('resize', handleResize);
   }, [imageElement, updateCanvasSize]);
 
-  // Convert canvas coordinates to image coordinates - improved version
+  // FIXED: More precise coordinate conversion with subpixel accuracy
   const canvasToImageCoords = useCallback((canvasX: number, canvasY: number) => {
-    if (!imageElement) return { x: 0, y: 0 };
+    if (!imageElement || !canvasRef.current) return { x: 0, y: 0 };
     
-    const scale = Math.min(canvasSize.width / imageElement.width, canvasSize.height / imageElement.height);
-    const offsetX = (canvasSize.width - imageElement.width * scale) / 2;
-    const offsetY = (canvasSize.height - imageElement.height * scale) / 2;
+    const canvas = canvasRef.current;
+    const canvasRect = canvas.getBoundingClientRect();
     
-    const imageX = (canvasX - offsetX) / scale;
-    const imageY = (canvasY - offsetY) / scale;
+    // Convert from screen coordinates to canvas coordinates with high precision
+    const scaleX = canvasSize.width / canvasRect.width;
+    const scaleY = canvasSize.height / canvasRect.height;
     
+    const canvasLocalX = canvasX * scaleX;
+    const canvasLocalY = canvasY * scaleY;
+    
+    // Since canvas size now matches display size, direct mapping to image
+    const imageX = (canvasLocalX / canvasSize.width) * imageElement.width;
+    const imageY = (canvasLocalY / canvasSize.height) * imageElement.height;
+    
+    // Use floor instead of round for more precise pixel targeting
     const coords = {
-      x: Math.round(imageX),
-      y: Math.round(imageY)
+      x: Math.floor(Math.max(0, Math.min(imageElement.width - 1, imageX))),
+      y: Math.floor(Math.max(0, Math.min(imageElement.height - 1, imageY)))
     };
+    
+    // Debug logging with more detail
+    if (Math.random() < 0.01) { // Log 1% of the time to avoid spam
+      console.log('Coordinate conversion:', {
+        screen: { x: canvasX, y: canvasY },
+        canvas: { x: canvasLocalX, y: canvasLocalY },
+        image: coords,
+        scales: { scaleX, scaleY },
+        sizes: { 
+          canvas: canvasSize, 
+          rendered: { w: canvasRect.width, h: canvasRect.height },
+          image: { w: imageElement.width, h: imageElement.height }
+        }
+      });
+    }
     
     return coords;
   }, [imageElement, canvasSize]);
 
-  // Enhanced mask pixel caching for instant hover detection
+  // Enhanced mask pixel caching with area calculation for better prioritization
   const buildMaskPixelCache = useCallback((maskId: number, maskData: ImageData) => {
     const pixelSet = new Set<string>();
     const { width, height, data } = maskData;
@@ -125,14 +152,12 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const pixelIndex = (y * width + x) * 4;
-        const alpha = data[pixelIndex + 3];
         const red = data[pixelIndex];
         const green = data[pixelIndex + 1];
         const blue = data[pixelIndex + 2];
         
-        // Check if pixel is part of mask (white pixels in RGBA format)
-        // For transparent background masks, we check for white pixels (RGB > 0)
-        if (red > 0 || green > 0 || blue > 0) {
+        // Check if pixel is part of mask (more strict threshold for better precision)
+        if (red > 128 || green > 128 || blue > 128) {
           pixelSet.add(`${x},${y}`);
         }
       }
@@ -141,7 +166,7 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
     return pixelSet;
   }, []);
 
-  // Ultra-fast point-in-mask detection using pixel cache
+  // Ultra-fast point-in-mask detection with improved threshold
   const isPointInMask = useCallback((maskId: number, x: number, y: number): boolean => {
     try {
       // Check bounds first
@@ -166,8 +191,8 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
       const green = maskData.data[pixelIndex + 1];
       const blue = maskData.data[pixelIndex + 2];
       
-      // For transparent background masks, check for white pixels (RGB > 0)
-      return red > 0 || green > 0 || blue > 0;
+      // Use higher threshold for better precision
+      return red > 128 || green > 128 || blue > 128;
     } catch (error) {
       console.error(`Error checking point in mask ${maskId}:`, error);
       return false;
@@ -250,23 +275,42 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
     };
   }, []);
 
-  // Memoized mask lookup for instant hover detection
+  // FIXED: Smart mask lookup that prioritizes smaller, more specific masks
   const maskAtPoint = useMemo(() => {
     if (!imageElement || masks.length === 0) return null;
     
     return (x: number, y: number) => {
-      // Check all masks in order
+      const matchingMasks = [];
+      
+      // Find all masks that contain this point
       for (const mask of masks) {
         if (isPointInMask(mask.id, x, y)) {
-          return mask;
+          matchingMasks.push(mask);
         }
       }
       
-      return null;
+      if (matchingMasks.length === 0) return null;
+      if (matchingMasks.length === 1) return matchingMasks[0];
+      
+      // Multiple masks found - prioritize the smallest/most specific one
+      // Calculate approximate area for each mask by counting pixels
+      const maskAreas = matchingMasks.map(mask => {
+        const pixelSet = maskPixelCache[mask.id];
+        return {
+          mask,
+          area: pixelSet ? pixelSet.size : 0
+        };
+      });
+      
+      // Sort by area (ascending) - smallest area first
+      maskAreas.sort((a, b) => a.area - b.area);
+      
+      // Return the smallest mask
+      return maskAreas[0].mask;
     };
   }, [masks, isPointInMask, imageElement, maskPixelCache]);
 
-  // Draw function with optimized mask rendering
+  // FIXED: Simplified draw function to match coordinate system
   const drawCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas || !imageElement) return;
@@ -277,64 +321,51 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
     // Clear canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Calculate scale and offset to center the image
-    const scale = Math.min(canvasSize.width / imageElement.width, canvasSize.height / imageElement.height);
-    const offsetX = (canvasSize.width - imageElement.width * scale) / 2;
-    const offsetY = (canvasSize.height - imageElement.height * scale) / 2;
-
-    // Draw background image centered
-    ctx.save();
-    ctx.translate(offsetX, offsetY);
-    ctx.scale(scale, scale);
-    ctx.drawImage(imageElement, 0, 0);
-    ctx.restore();
+    // CRITICAL FIX: Draw image to fill entire canvas (no centering/scaling)
+    // Since canvasSize now matches display size exactly, just fill the canvas
+    ctx.drawImage(imageElement, 0, 0, canvasSize.width, canvasSize.height);
 
     // Function to draw a single mask with given color and opacity
     const drawMask = (mask: any, fillColor: string, opacity: number) => {
       const maskImg = loadedMaskImages[mask.id];
       if (!maskImg) return;
 
-      ctx.save();
-      ctx.translate(offsetX, offsetY);
-      ctx.scale(scale, scale);
-      
       // Create a temporary canvas for mask compositing
       const tempCanvas = document.createElement('canvas');
       const tempCtx = tempCanvas.getContext('2d');
       if (!tempCtx) return;
       
-      tempCanvas.width = imageElement.width;
-      tempCanvas.height = imageElement.height;
+      tempCanvas.width = canvasSize.width;
+      tempCanvas.height = canvasSize.height;
       
-      // Draw the mask to temp canvas
-      tempCtx.drawImage(maskImg, 0, 0);
+      // Draw the mask scaled to canvas size
+      tempCtx.drawImage(maskImg, 0, 0, canvasSize.width, canvasSize.height);
       
       // Get mask data
       const maskData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
       
-      // Create colored overlay only where mask is white (RGBA format)
+      // Create colored overlay
       const coloredOverlay = document.createElement('canvas');
       const overlayCtx = coloredOverlay.getContext('2d');
       if (!overlayCtx) return;
       
-      coloredOverlay.width = imageElement.width;
-      coloredOverlay.height = imageElement.height;
+      coloredOverlay.width = canvasSize.width;
+      coloredOverlay.height = canvasSize.height;
       
       // Fill with color
       overlayCtx.fillStyle = fillColor;
-      overlayCtx.fillRect(0, 0, imageElement.width, imageElement.height);
+      overlayCtx.fillRect(0, 0, canvasSize.width, canvasSize.height);
       
       // Apply mask to color overlay
-      const overlayData = overlayCtx.getImageData(0, 0, imageElement.width, imageElement.height);
+      const overlayData = overlayCtx.getImageData(0, 0, canvasSize.width, canvasSize.height);
       for (let i = 0; i < maskData.data.length; i += 4) {
         const red = maskData.data[i];
         const green = maskData.data[i + 1];
         const blue = maskData.data[i + 2];
         
-        // Check for white pixels in RGBA format (transparent background)
         const maskValue = Math.max(red, green, blue);
         const alpha = maskValue / 255 * opacity;
-        overlayData.data[i + 3] = Math.round(overlayData.data[i + 3] * alpha); // Set alpha
+        overlayData.data[i + 3] = Math.round(overlayData.data[i + 3] * alpha);
       }
       
       overlayCtx.putImageData(overlayData, 0, 0);
@@ -342,8 +373,6 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
       // Draw the colored overlay
       ctx.globalCompositeOperation = 'source-over';
       ctx.drawImage(coloredOverlay, 0, 0);
-      
-      ctx.restore();
     };
 
     // Draw colored masks (persistent) - lowest priority
@@ -406,7 +435,7 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
     return colors[index % colors.length];
   };
 
-  // Enhanced mouse move handler with instant mask detection
+  // FIXED: Multi-point sampling for more accurate hover detection
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!isHoverEnabled || !imageElement || !maskAtPoint) return;
 
@@ -417,19 +446,46 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     
-    // Convert canvas coordinates to image coordinates
-    const imageCoords = canvasToImageCoords(x, y);
+    // Simple bounds checking
+    const isOverCanvas = x >= 0 && x < rect.width && y >= 0 && y < rect.height;
     
-    // Check if mouse is within image bounds
-    if (imageCoords.x >= 0 && imageCoords.x < imageElement.width && 
-        imageCoords.y >= 0 && imageCoords.y < imageElement.height) {
+    if (isOverCanvas) {
+      // Multi-point sampling for better accuracy
+      const samplePoints = [
+        { x, y }, // Center point
+        { x: x - 1, y }, // Left
+        { x: x + 1, y }, // Right
+        { x, y: y - 1 }, // Up
+        { x, y: y + 1 }, // Down
+      ];
       
-      // Instant mask detection using pixel cache
-      const maskAtCurrentPoint = maskAtPoint(imageCoords.x, imageCoords.y);
+      let bestMask = null;
+      let smallestArea = Infinity;
       
-      if (maskAtCurrentPoint) {
-        if (hoveredMaskId !== maskAtCurrentPoint.id) {
-          setHoveredMaskId(maskAtCurrentPoint.id);
+      // Check each sample point
+      for (const point of samplePoints) {
+        if (point.x >= 0 && point.x < rect.width && point.y >= 0 && point.y < rect.height) {
+          const imageCoords = canvasToImageCoords(point.x, point.y);
+          const maskAtCurrentPoint = maskAtPoint(imageCoords.x, imageCoords.y);
+          
+          if (maskAtCurrentPoint) {
+            // Get mask area from pixel cache
+            const pixelSet = maskPixelCache[maskAtCurrentPoint.id];
+            const area = pixelSet ? pixelSet.size : Infinity;
+            
+            // Prefer smaller masks (more specific)
+            if (area < smallestArea) {
+              bestMask = maskAtCurrentPoint;
+              smallestArea = area;
+            }
+          }
+        }
+      }
+      
+      // Update hover state
+      if (bestMask) {
+        if (hoveredMaskId !== bestMask.id) {
+          setHoveredMaskId(bestMask.id);
         }
       } else {
         if (hoveredMaskId !== null) {
@@ -441,14 +497,14 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
         setHoveredMaskId(null);
       }
     }
-  }, [imageElement, maskAtPoint, canvasToImageCoords, setHoveredMaskId, isHoverEnabled, hoveredMaskId]);
+  }, [imageElement, maskAtPoint, canvasToImageCoords, setHoveredMaskId, isHoverEnabled, hoveredMaskId, maskPixelCache]);
 
   // Handle mouse leave to clear hover
   const handleMouseLeave = useCallback(() => {
     setHoveredMaskId(null);
   }, [setHoveredMaskId]);
 
-  // Handle canvas click
+  // FIXED: Simplified canvas click handler
   const handleCanvasClick = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       if (!imageElement) return;
@@ -460,12 +516,11 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
       
-      // Convert canvas coordinates to image coordinates
-      const imageCoords = canvasToImageCoords(x, y);
+      // Simple bounds checking
+      const isOverCanvas = x >= 0 && x < rect.width && y >= 0 && y < rect.height;
       
-      // Check if click is within image bounds
-      if (imageCoords.x >= 0 && imageCoords.x <= imageElement.width && 
-          imageCoords.y >= 0 && imageCoords.y <= imageElement.height) {
+      if (isOverCanvas) {
+        const imageCoords = canvasToImageCoords(x, y);
         
         if (isClickToGenerateMode) {
           // Click mode is active - always generate a new mask
@@ -486,7 +541,7 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
     [imageElement, canvasToImageCoords, onPointClick, onMaskSelect, masks.length, isClickToGenerateMode, hoveredMaskId, selectedMasks]
   );
 
-  // Handle right click for removing from selection
+  // FIXED: Simplified context menu handler
   const handleContextMenu = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     e.preventDefault();
     
@@ -499,12 +554,10 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     
-    // Convert canvas coordinates to image coordinates
-    const imageCoords = canvasToImageCoords(x, y);
+    const isOverCanvas = x >= 0 && x < rect.width && y >= 0 && y < rect.height;
     
-    // Check if click is within image bounds
-    if (imageCoords.x >= 0 && imageCoords.x <= imageElement.width && 
-        imageCoords.y >= 0 && imageCoords.y <= imageElement.height) {
+    if (isOverCanvas) {
+      const imageCoords = canvasToImageCoords(x, y);
       
       // Handle shift+right-click for removing from selection
       if (e.shiftKey) {
@@ -534,11 +587,16 @@ const InteractiveCanvas: React.FC<CanvasProps> = ({
         ref={canvasRef}
         width={canvasSize.width}
         height={canvasSize.height}
-        className={`w-full h-full object-contain transition-all duration-300 ${
+        className={`w-full h-full transition-all duration-300 ${
           isClickToGenerateMode 
             ? 'cursor-crosshair' 
             : 'cursor-pointer'
         }`}
+        style={{
+          // CRITICAL FIX: Ensure exact pixel mapping
+          imageRendering: 'pixelated',
+          objectFit: 'fill'
+        }}
         onClick={handleCanvasClick}
         onContextMenu={handleContextMenu}
         onMouseMove={handleMouseMove}
