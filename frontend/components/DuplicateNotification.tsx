@@ -99,7 +99,7 @@ const DuplicateNotification: React.FC<DuplicateNotificationProps> = ({
           {status === 'new' && (
             <div className="space-y-3">
               <p className="text-gray-600">
-                This is a new image that hasn't been processed before. Would you like to generate masks for it?
+                This is a new image that hasn't been processed before. Generate masks to use it.
               </p>
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
                 <p className="text-sm text-amber-700">
@@ -113,7 +113,7 @@ const DuplicateNotification: React.FC<DuplicateNotificationProps> = ({
         {/* Actions */}
         {status === 'new' && (
           <div className="flex space-x-3">
-            <button
+            {/* <button
               onClick={onGenerateMasks}
               className="flex-1 bg-gradient-to-r from-blue-600 to-purple-600 text-white py-3 px-4 rounded-xl font-medium hover:from-blue-700 hover:to-purple-700 transition-all duration-200 shadow-lg hover:shadow-xl"
             >
@@ -124,13 +124,13 @@ const DuplicateNotification: React.FC<DuplicateNotificationProps> = ({
               className="px-4 py-3 border border-gray-300 text-gray-700 rounded-xl font-medium hover:bg-gray-50 transition-colors"
             >
               Cancel
-            </button>
+            </button> */}
           </div>
         )}
 
         {status === 'duplicate' && onFetchDuplicates && (
           <div className="flex space-x-3">
-            <button
+            {/* <button
               onClick={onFetchDuplicates}
               className="flex-1 bg-green-600 text-white py-3 px-4 rounded-xl font-medium hover:bg-green-700 transition-colors shadow-lg hover:shadow-xl"
             >
@@ -141,7 +141,7 @@ const DuplicateNotification: React.FC<DuplicateNotificationProps> = ({
               className="px-4 py-3 border border-gray-300 text-gray-700 rounded-xl font-medium hover:bg-gray-50 transition-colors"
             >
               Close
-            </button>
+            </button>  */}
           </div>
         )}
 
